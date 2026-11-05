@@ -12,6 +12,7 @@ public class Inventory {
     /** Mục 2.2 - O(h). */
     public boolean receiveBatch(String barcode, Batch batch) {
         if (barcode == null || barcode.isEmpty() || batch == null) return false;
+        if (batch.getImportDate() == null || batch.getExpiryDate() == null) return false;
         if (batch.getQuantity() <= 0) return false;
         if (!batch.getExpiryDate().isAfter(batch.getImportDate())) return false;
         BSTNode node = productBST.search(barcode);
@@ -26,7 +27,7 @@ public class Inventory {
      */
     public boolean issueStock(String barcode, int quantity, LocalDate currentDate,
                               List<String> issuedList, List<String> expiredList) {
-        if (barcode == null || barcode.isEmpty() || quantity <= 0) return false;
+        if (barcode == null || barcode.isEmpty() || quantity <= 0 || currentDate == null) return false;
         BSTNode node = productBST.search(barcode);
         if (node == null) return false;
         BatchQueue queue = node.getBatchQueue();
