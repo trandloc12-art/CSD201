@@ -22,7 +22,42 @@ public class MainTest {
         return inv;
     }
 
-    public static void main(String[] args) {
+
+    // ---- Phase 4 (tối ưu Hướng 1): hỗ trợ kiểm thử duyệt in-order lặp ----
+    static void refInOrder(BSTNode n, List<BSTNode> out) {      // bản đệ quy tham chiếu để đối chiếu
+        if (n == null) return;
+        refInOrder(n.left, out); out.add(n); refInOrder(n.right, out);
+    }
+
+    static String code(int i) {                                   // barcode 8 chữ số, so sánh chuỗi = so sánh số
+        return String.format("%08d", i);
+    }
+
+    /** Dựng cây lệch n nút bằng cách nối thẳng (tránh chi phí O(n^2) của insert); right = true: lệch phải. */
+    static ProductBST skewed(int n, boolean right) throws Exception {
+        return skewedInto(new ProductBST(), n, right);
+    }
+
+    static ProductBST skewedInto(ProductBST t, int n, boolean right) throws Exception {
+        BSTNode first = new BSTNode(new Product(code(right ? 0 : n), "p", "u", 1)), last = first;
+        for (int i = 1; i < n; i++) {
+            BSTNode x = new BSTNode(new Product(code(right ? i : n - i), "p", "u", 1));
+            if (right) last.right = x; else last.left = x;
+            last = x;
+        }
+        java.lang.reflect.Field f = ProductBST.class.getDeclaredField("root");
+        f.setAccessible(true);
+        f.set(t, first);
+        return t;
+    }
+
+    static boolean ascending(List<BSTNode> l) {
+        for (int i = 1; i < l.size(); i++)
+            if (l.get(i - 1).product.getBarcode().compareTo(l.get(i).product.getBarcode()) >= 0) return false;
+        return true;
+    }
+
+    public static void main(String[] args) throws Exception {
         // Trace 1 - BST
         ProductBST t = new ProductBST();
         check("T1 insert BC-04/02/06/05", t.insert(new Product("BC-04", "a", "u", 0)) && t.insert(new Product("BC-02", "b", "u", 0))
@@ -168,6 +203,40 @@ public class MainTest {
         check("T5b báo cáo nhiều sản phẩm theo barcode tăng dần (100,200,300)",
                 rp6.size() == 3 && rp6.get(0).startsWith("100|") && rp6.get(1).startsWith("200|") && rp6.get(2).startsWith("300|"));
         check("T4b checkExpiry không có lô nào cần chú ý -> danh sách rỗng", new Inventory().checkExpiry(d(7, 10), 5).isEmpty());
+
+        // ===== Phase 4 - Tối ưu Hướng 1: inOrderTraversal lặp (T6x) =====
+        check("T6a inOrderTraversal: cây rỗng -> danh sách rỗng", new ProductBST().inOrderTraversal().isEmpty());
+        ProductBST single = new ProductBST();
+        single.insert(new Product("X", "x", "u", 0));
+        check("T6b inOrderTraversal: cây một nút", single.inOrderTraversal().size() == 1
+                && single.inOrderTraversal().get(0) == single.getRoot());
+        ProductBST rnd = new ProductBST();
+        java.util.Random rg = new java.util.Random(7);
+        for (int i = 0; i < 2000; i++) rnd.insert(new Product(code(rg.nextInt(100000)), "p", "u", 1));
+        List<BSTNode> refRnd = new ArrayList<>();
+        refInOrder(rnd.getRoot(), refRnd);
+        List<BSTNode> itRnd = rnd.inOrderTraversal();
+        boolean same = itRnd.size() == refRnd.size();
+        for (int i = 0; same && i < refRnd.size(); i++) same = itRnd.get(i) == refRnd.get(i);
+        check("T6c cây ngẫu nhiên (~2000 nút): kết quả trùng từng nút với bản đệ quy tham chiếu", same && ascending(itRnd));
+        ProductBST small = new ProductBST();
+        for (String c : new String[]{"M", "F", "T", "A", "H", "P", "Z", "B"}) small.insert(new Product(c, "p", "u", 0));
+        StringBuilder sb = new StringBuilder();
+        for (BSTNode nd : small.inOrderTraversal()) sb.append(nd.product.getBarcode());
+        check("T6d cây nhỏ có cả nhánh trái/phải: thứ tự ABFHMPTZ", sb.toString().equals("ABFHMPTZ"));
+        List<BSTNode> before = small.inOrderTraversal();
+        List<BSTNode> after2 = small.inOrderTraversal();
+        check("T6e gọi hai lần cho cùng kết quả, không làm đổi cây", before.equals(after2) && small.getRoot().product.getBarcode().equals("M"));
+        int BIG = 200_000;
+        List<BSTNode> sr = skewed(BIG, true).inOrderTraversal();
+        check("T6f cây lệch phải 200.000 nút: không tràn stack, đủ nút, tăng dần", sr.size() == BIG && ascending(sr));
+        List<BSTNode> sl = skewed(BIG, false).inOrderTraversal();
+        check("T6g cây lệch trái 200.000 nút: không tràn stack, đủ nút, tăng dần", sl.size() == BIG && ascending(sl));
+        Inventory invS = new Inventory();
+        ProductBST sk = skewedInto(invS.getProductBST(), BIG, true);
+        sk.getRoot().batchQueue.enqueue(new Batch("S1", d(1, 9), d(5, 10), 7));
+        check("T6h checkExpiry và generateInventoryReport chạy được trên cây lệch 200.000 nút",
+                invS.checkExpiry(d(7, 10), 5).size() == 1 && invS.generateInventoryReport().size() == BIG);
 
         System.out.println("\nKết quả: " + pass + " PASS, " + fail + " FAIL");
         if (fail > 0) System.exit(1);

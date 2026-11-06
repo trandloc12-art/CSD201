@@ -67,17 +67,32 @@ public class ProductBST {
         return node;
     }
 
-    /** Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (đệ quy LNR). */
+    /**
+     * Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (LNR).
+     * Phase 4 (Hướng 1): duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
+     * thay cho đệ quy, nên không còn tràn call stack của JVM trên cây lệch lớn. Ngăn xếp nằm trên heap,
+     * không cấp phát đối tượng cho từng nút; kết quả giống hệt bản đệ quy. Không gian phụ O(h).
+     */
     public List<BSTNode> inOrderTraversal() {
         List<BSTNode> list = new ArrayList<>();
-        visit(root, list);
+        BSTNode[] stack = new BSTNode[64];     // ngăn xếp: các nút đã đi qua nhưng chưa thăm
+        int top = 0;                           // số phần tử hiện có trong ngăn xếp
+        BSTNode current = root;
+        while (current != null || top > 0) {
+            while (current != null) {          // đi hết nhánh trái, đẩy từng nút vào ngăn xếp
+                if (top == stack.length) {     // đầy: giãn gấp đôi (sao chép thủ công), chi phí chia đều O(1)
+                    BSTNode[] bigger = new BSTNode[top * 2];
+                    for (int i = 0; i < top; i++) bigger[i] = stack[i];
+                    stack = bigger;
+                }
+                stack[top++] = current;
+                current = current.left;
+            }
+            BSTNode node = stack[--top];       // lấy nút ở đỉnh ngăn xếp
+            stack[top] = null;                 // không giữ tham chiếu thừa
+            list.add(node);                    // thăm nút (N)
+            current = node.right;              // chuyển sang cây con phải (R)
+        }
         return list;
-    }
-
-    private void visit(BSTNode node, List<BSTNode> list) {
-        if (node == null) return;
-        visit(node.left, list);
-        list.add(node);
-        visit(node.right, list);
     }
 }
