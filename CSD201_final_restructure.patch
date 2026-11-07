@@ -1,0 +1,487 @@
+diff --git a/GHI_CHU_CODE.md b/GHI_CHU_CODE.md
+index e341d15..39f6fc8 100644
+--- a/GHI_CHU_CODE.md
++++ b/GHI_CHU_CODE.md
+@@ -1,5 +1,8 @@
+ # Ghi chú đọc hiểu mã nguồn (để bảo vệ / trả lời vấn đáp)
+ 
++## Cấu trúc project
++`model` (Product, Batch) · `structure` (BSTNode, BatchQueue, ProductBST) · `service` (Inventory); kiểm thử ở `src/test`, đo hiệu năng ở `src/bench`.
++
+ ## Bức tranh chung
+ `Inventory` → dùng `ProductBST` (tìm sản phẩm theo barcode) → mỗi `BSTNode` giữ 1 `Product` + 1 `BatchQueue` → hàng đợi chứa các `Batch`.
+ BST lo **tìm sản phẩm** (O(h)); Queue lo **thứ tự FIFO của lô** (O(1)). Hai việc tách rời nhau.
+@@ -13,12 +16,12 @@ BST lo **tìm sản phẩm** (O(h)); Queue lo **thứ tự FIFO của lô** (O(1
+ 5. **`deleteNode` khi nút có 2 con:** lấy nút nhỏ nhất của cây con phải (`FindMin`), chép `product` và **`batchQueue`** sang nút cần xóa rồi xóa nút kế nhiệm.
+    Chép `batchQueue` là an toàn vì tiền điều kiện của `delete` là hàng đợi của nút bị xóa **rỗng** (không mất lô nào) — có test "hàng đợi của nút kế nhiệm không mất lô".
+ 6. **Vì sao `search`/`insert`/`inOrderTraversal` cài lặp còn `delete` cài đệ quy?** Lặp không tốn call stack của JVM. `delete` đệ quy cho dễ đọc nhưng tốn stack O(h) và vẫn có nguy cơ tràn stack trên cây lệch rất lớn (chưa kiểm).
+-   `inOrderTraversal` ban đầu cũng đệ quy (nên `checkExpiry` trước đây chỉ đo được trên cây ngẫu nhiên); Phase 4 đã đổi sang vòng lặp, xem điểm 9.
++   `inOrderTraversal` ban đầu cũng đệ quy (nên `checkExpiry` chỉ đo được trên cây ngẫu nhiên); bản cuối đã đổi sang vòng lặp, xem điểm 9.
+ 7. **Hai chỗ code có mà Table 8 chưa liệt kê:** `ProductBST.getRoot()` và `Inventory.getProductBST()` (phục vụ kiểm thử/benchmark). Nhãn trạng thái `EXPIRED` / `NEAR_EXPIRY` tương ứng "Đã hết hạn" / "Sắp hết hạn" trong pseudocode.
+ 8. **Hạn chế đã biết (đã nêu ở Mục VI.B.4):** BST không cân bằng → worst case O(n); FIFO theo ngày nhập không luôn trùng thứ tự hết hạn (gợi ý FEFO bằng priority queue).
+    `issueStock` còn tạo `toList()` O(k) mỗi lần gọi — đây là chi phí thấy rõ khi k lớn (Table 14).
+ 
+-9. **Tối ưu Phase 4 (Hướng 1): duyệt in-order lặp.** Vòng lặp ngoài chạy khi `current != null` hoặc ngăn xếp còn phần tử. Vòng trong đi hết nhánh trái và đẩy nút vào ngăn xếp (mảng `BSTNode[]` khởi đầu 64, đầy thì nhân đôi bằng vòng sao chép);
++9. **Tối ưu (Hướng 1): duyệt in-order lặp.** Vòng lặp ngoài chạy khi `current != null` hoặc ngăn xếp còn phần tử. Vòng trong đi hết nhánh trái và đẩy nút vào ngăn xếp (mảng `BSTNode[]` khởi đầu 64, đầy thì nhân đôi bằng vòng sao chép);
+    sau đó lấy nút ở đỉnh, thêm vào danh sách (N), rồi sang con phải (R). Mỗi nút đẩy và lấy đúng một lần nên Θ(n); ngăn xếp tối đa h+1 phần tử nên không gian phụ O(h), nằm trên heap.
+    - *Vì sao đổi?* Bản đệ quy tràn call stack (`StackOverflowError`) từ khoảng 12.000–16.000 nút trên cây lệch (h = n); bản lặp chạy đến 3.000.000 nút. Lợi ích là **độ bền**, không phải tốc độ trên cây ngẫu nhiên (số đo: không đổi đáng kể).
+    - *Phiên bản đầu* dùng ngăn xếp danh sách liên kết, chậm hơn ~1,3–1,5 lần trên cây ngẫu nhiên n = 100.000 do cấp phát một đối tượng cho mỗi nút; đã đổi sang mảng.
+@@ -27,7 +30,7 @@ BST lo **tìm sản phẩm** (O(h)); Queue lo **thứ tự FIFO của lô** (O(1
+ 
+ ## Cách chạy
+ ```
+-cd src && sh build.sh                    # hoặc: javac -d out *.java
+-java -cp out MainTest                    # 56 PASS, 0 FAIL
+-java -Xms1g -Xmx2g -cp out Benchmark > ../bench.csv   # 5-8 phút
++sh build.sh                              # hoặc: javac -encoding UTF-8 -d out $(find src -name '*.java')
++java -cp out warehouse.MainTest          # 57 PASS, 0 FAIL
++java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv   # 5-8 phút
+ ```
+diff --git a/Quy_Phase4_optimization.patch b/Quy_Phase4_optimization.patch
+deleted file mode 100644
+index ac4efa3..0000000
+--- a/Quy_Phase4_optimization.patch
++++ /dev/null
+@@ -1,187 +0,0 @@
+-diff --git a/GHI_CHU_CODE.md b/GHI_CHU_CODE.md
+-index cce4005..e341d15 100644
+---- a/GHI_CHU_CODE.md
+-+++ b/GHI_CHU_CODE.md
+-@@ -12,15 +12,22 @@ BST lo **tìm sản phẩm** (O(h)); Queue lo **thứ tự FIFO của lô** (O(1
+- 4. **Xuất một phần lô:** `b.setQuantity(b.getQuantity() - remaining)`, lô vẫn ở đầu hàng, không dequeue.
+- 5. **`deleteNode` khi nút có 2 con:** lấy nút nhỏ nhất của cây con phải (`FindMin`), chép `product` và **`batchQueue`** sang nút cần xóa rồi xóa nút kế nhiệm.
+-    Chép `batchQueue` là an toàn vì tiền điều kiện của `delete` là hàng đợi của nút bị xóa **rỗng** (không mất lô nào) — có test "hàng đợi của nút kế nhiệm không mất lô".
+--6. **Vì sao `search`/`insert` cài lặp, `delete`/`inOrderTraversal` cài đệ quy?** Lặp giúp không tốn stack (không gian phụ O(1)); `delete` và duyệt LNR đệ quy cho dễ đọc nhưng tốn stack O(h) và có nguy cơ tràn stack trên cây lệch rất lớn
+--   (đó là lý do `checkExpiry` chỉ được đo trên cây ngẫu nhiên, và là Hướng 1 trong phần tối ưu).
+-+6. **Vì sao `search`/`insert`/`inOrderTraversal` cài lặp còn `delete` cài đệ quy?** Lặp không tốn call stack của JVM. `delete` đệ quy cho dễ đọc nhưng tốn stack O(h) và vẫn có nguy cơ tràn stack trên cây lệch rất lớn (chưa kiểm).
+-+   `inOrderTraversal` ban đầu cũng đệ quy (nên `checkExpiry` trước đây chỉ đo được trên cây ngẫu nhiên); Phase 4 đã đổi sang vòng lặp, xem điểm 9.
+- 7. **Hai chỗ code có mà Table 8 chưa liệt kê:** `ProductBST.getRoot()` và `Inventory.getProductBST()` (phục vụ kiểm thử/benchmark). Nhãn trạng thái `EXPIRED` / `NEAR_EXPIRY` tương ứng "Đã hết hạn" / "Sắp hết hạn" trong pseudocode.
+- 8. **Hạn chế đã biết (đã nêu ở Mục VI.B.4):** BST không cân bằng → worst case O(n); FIFO theo ngày nhập không luôn trùng thứ tự hết hạn (gợi ý FEFO bằng priority queue).
+-    `issueStock` còn tạo `toList()` O(k) mỗi lần gọi — đây là chi phí thấy rõ khi k lớn (Table 14).
+- 
+-+9. **Tối ưu Phase 4 (Hướng 1): duyệt in-order lặp.** Vòng lặp ngoài chạy khi `current != null` hoặc ngăn xếp còn phần tử. Vòng trong đi hết nhánh trái và đẩy nút vào ngăn xếp (mảng `BSTNode[]` khởi đầu 64, đầy thì nhân đôi bằng vòng sao chép);
+-+   sau đó lấy nút ở đỉnh, thêm vào danh sách (N), rồi sang con phải (R). Mỗi nút đẩy và lấy đúng một lần nên Θ(n); ngăn xếp tối đa h+1 phần tử nên không gian phụ O(h), nằm trên heap.
+-+   - *Vì sao đổi?* Bản đệ quy tràn call stack (`StackOverflowError`) từ khoảng 12.000–16.000 nút trên cây lệch (h = n); bản lặp chạy đến 3.000.000 nút. Lợi ích là **độ bền**, không phải tốc độ trên cây ngẫu nhiên (số đo: không đổi đáng kể).
+-+   - *Phiên bản đầu* dùng ngăn xếp danh sách liên kết, chậm hơn ~1,3–1,5 lần trên cây ngẫu nhiên n = 100.000 do cấp phát một đối tượng cho mỗi nút; đã đổi sang mảng.
+-+   - *Câu hỏi hay gặp:* "Tại sao không nâng lên AVL?" → AVL thêm chiều cao vào `BSTNode`, phép quay, đổi class diagram; rủi ro cao, ghi ở Future Work. "Ngăn xếp mảng có tốn thêm không?" → O(h) ≤ O(n), tương đương call stack của bản đệ quy nhưng nằm trên heap.
+-+   - *Test:* T6a–T6h trong `MainTest` (cây rỗng, một nút, 2.000 nút ngẫu nhiên đối chiếu từng nút với bản đệ quy, cây 8 nút, gọi hai lần, cây lệch phải/trái 200.000 nút, `checkExpiry` và báo cáo trên cây lệch 200.000 nút).
+-+
+- ## Cách chạy
+- ```
+- cd src && sh build.sh                    # hoặc: javac -d out *.java
+--java -cp out MainTest                    # 48 PASS, 0 FAIL
+-+java -cp out MainTest                    # 56 PASS, 0 FAIL
+- java -Xms1g -Xmx2g -cp out Benchmark > ../bench.csv   # 5-8 phút
+- ```
+-diff --git a/README.txt b/README.txt
+-index 9095419..5c3c265 100644
+---- a/README.txt
+-+++ b/README.txt
+-@@ -1,7 +1,7 @@
+- Group 6 - Warehouse Inventory Management (Phase 4 - Final) - ma nguon + chuong trinh kiem thu + chuong trinh do
+- 
+- Bien dich:    cd src && sh build.sh        (hoac: javac -d out *.java)
+--Kiem thu:     java -cp out MainTest        (48 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien bo sung o Phase 4)
+-+Kiem thu:     java -cp out MainTest        (56 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien bo sung o Phase 4 + 8 kiem thu duyet in-order lap)
+-               Neu tieng Viet bi loi hien thi tren Windows: chcp 65001 truoc, hoac java -Dstdout.encoding=UTF-8 -cp out MainTest
+- Do hieu nang: java -Xms1g -Xmx2g -cp out Benchmark > bench.csv   (mat khoang 5-8 phut; khong chay viec khac trong luc do)
+- 
+-@@ -9,6 +9,8 @@ Ghi chu:
+- - Co so cua ma nguon la cai dat tham chieu viet theo thiet ke Phase 2 (Table 8, pseudocode Muc V.A).
+-   Phase 4 bo sung: kiem tra dau vao null (importDate/expiryDate/currentDate) trong receiveBatch/issueStock,
+-   19 kiem thu bien (xoa nut la/1 con/goc, so luong am, HSD = currentDate, xuat dung bang ton...), do lai hieu nang.
+-+  Toi uu (Muc VII.B): ProductBST.inOrderTraversal doi tu de quy sang duyet lap bang ngan xep mang tu cai dat
+-+  (het tran stack tren cay lech lon; khong doi chu ky), kem 8 kiem thu (T6a-T6h trong MainTest).
+-   Viec dung AI de sinh/tham khao ma phai duoc ghi trong AI Audit Log (nop rieng).
+- - bench.csv hien tai do tren may ao Linux 1 loi (Xeon 2.80 GHz, ~4 GB RAM), OpenJDK 21.0.12.1.
+-   Hay chay lai Benchmark tren may cua nhom, roi cap nhat Table 13-14 va Figure 9 neu khac.
+-diff --git a/src/MainTest.java b/src/MainTest.java
+-index a0224d0..b72fcec 100644
+---- a/src/MainTest.java
+-+++ b/src/MainTest.java
+-@@ -22,7 +22,42 @@ public class MainTest {
+-         return inv;
+-     }
+- 
+--    public static void main(String[] args) {
+-+
+-+    // ---- Phase 4 (tối ưu Hướng 1): hỗ trợ kiểm thử duyệt in-order lặp ----
+-+    static void refInOrder(BSTNode n, List<BSTNode> out) {      // bản đệ quy tham chiếu để đối chiếu
+-+        if (n == null) return;
+-+        refInOrder(n.left, out); out.add(n); refInOrder(n.right, out);
+-+    }
+-+
+-+    static String code(int i) {                                   // barcode 8 chữ số, so sánh chuỗi = so sánh số
+-+        return String.format("%08d", i);
+-+    }
+-+
+-+    /** Dựng cây lệch n nút bằng cách nối thẳng (tránh chi phí O(n^2) của insert); right = true: lệch phải. */
+-+    static ProductBST skewed(int n, boolean right) throws Exception {
+-+        return skewedInto(new ProductBST(), n, right);
+-+    }
+-+
+-+    static ProductBST skewedInto(ProductBST t, int n, boolean right) throws Exception {
+-+        BSTNode first = new BSTNode(new Product(code(right ? 0 : n), "p", "u", 1)), last = first;
+-+        for (int i = 1; i < n; i++) {
+-+            BSTNode x = new BSTNode(new Product(code(right ? i : n - i), "p", "u", 1));
+-+            if (right) last.right = x; else last.left = x;
+-+            last = x;
+-+        }
+-+        java.lang.reflect.Field f = ProductBST.class.getDeclaredField("root");
+-+        f.setAccessible(true);
+-+        f.set(t, first);
+-+        return t;
+-+    }
+-+
+-+    static boolean ascending(List<BSTNode> l) {
+-+        for (int i = 1; i < l.size(); i++)
+-+            if (l.get(i - 1).product.getBarcode().compareTo(l.get(i).product.getBarcode()) >= 0) return false;
+-+        return true;
+-+    }
+-+
+-+    public static void main(String[] args) throws Exception {
+-         // Trace 1 - BST
+-         ProductBST t = new ProductBST();
+-         check("T1 insert BC-04/02/06/05", t.insert(new Product("BC-04", "a", "u", 0)) && t.insert(new Product("BC-02", "b", "u", 0))
+-@@ -169,6 +204,40 @@ public class MainTest {
+-                 rp6.size() == 3 && rp6.get(0).startsWith("100|") && rp6.get(1).startsWith("200|") && rp6.get(2).startsWith("300|"));
+-         check("T4b checkExpiry không có lô nào cần chú ý -> danh sách rỗng", new Inventory().checkExpiry(d(7, 10), 5).isEmpty());
+- 
+-+        // ===== Phase 4 - Tối ưu Hướng 1: inOrderTraversal lặp (T6x) =====
+-+        check("T6a inOrderTraversal: cây rỗng -> danh sách rỗng", new ProductBST().inOrderTraversal().isEmpty());
+-+        ProductBST single = new ProductBST();
+-+        single.insert(new Product("X", "x", "u", 0));
+-+        check("T6b inOrderTraversal: cây một nút", single.inOrderTraversal().size() == 1
+-+                && single.inOrderTraversal().get(0) == single.getRoot());
+-+        ProductBST rnd = new ProductBST();
+-+        java.util.Random rg = new java.util.Random(7);
+-+        for (int i = 0; i < 2000; i++) rnd.insert(new Product(code(rg.nextInt(100000)), "p", "u", 1));
+-+        List<BSTNode> refRnd = new ArrayList<>();
+-+        refInOrder(rnd.getRoot(), refRnd);
+-+        List<BSTNode> itRnd = rnd.inOrderTraversal();
+-+        boolean same = itRnd.size() == refRnd.size();
+-+        for (int i = 0; same && i < refRnd.size(); i++) same = itRnd.get(i) == refRnd.get(i);
+-+        check("T6c cây ngẫu nhiên (~2000 nút): kết quả trùng từng nút với bản đệ quy tham chiếu", same && ascending(itRnd));
+-+        ProductBST small = new ProductBST();
+-+        for (String c : new String[]{"M", "F", "T", "A", "H", "P", "Z", "B"}) small.insert(new Product(c, "p", "u", 0));
+-+        StringBuilder sb = new StringBuilder();
+-+        for (BSTNode nd : small.inOrderTraversal()) sb.append(nd.product.getBarcode());
+-+        check("T6d cây nhỏ có cả nhánh trái/phải: thứ tự ABFHMPTZ", sb.toString().equals("ABFHMPTZ"));
+-+        List<BSTNode> before = small.inOrderTraversal();
+-+        List<BSTNode> after2 = small.inOrderTraversal();
+-+        check("T6e gọi hai lần cho cùng kết quả, không làm đổi cây", before.equals(after2) && small.getRoot().product.getBarcode().equals("M"));
+-+        int BIG = 200_000;
+-+        List<BSTNode> sr = skewed(BIG, true).inOrderTraversal();
+-+        check("T6f cây lệch phải 200.000 nút: không tràn stack, đủ nút, tăng dần", sr.size() == BIG && ascending(sr));
+-+        List<BSTNode> sl = skewed(BIG, false).inOrderTraversal();
+-+        check("T6g cây lệch trái 200.000 nút: không tràn stack, đủ nút, tăng dần", sl.size() == BIG && ascending(sl));
+-+        Inventory invS = new Inventory();
+-+        ProductBST sk = skewedInto(invS.getProductBST(), BIG, true);
+-+        sk.getRoot().batchQueue.enqueue(new Batch("S1", d(1, 9), d(5, 10), 7));
+-+        check("T6h checkExpiry và generateInventoryReport chạy được trên cây lệch 200.000 nút",
+-+                invS.checkExpiry(d(7, 10), 5).size() == 1 && invS.generateInventoryReport().size() == BIG);
+-+
+-         System.out.println("\nKết quả: " + pass + " PASS, " + fail + " FAIL");
+-         if (fail > 0) System.exit(1);
+-     }
+-diff --git a/src/ProductBST.java b/src/ProductBST.java
+-index 09906fb..1f0dfab 100644
+---- a/src/ProductBST.java
+-+++ b/src/ProductBST.java
+-@@ -67,17 +67,32 @@ public class ProductBST {
+-         return node;
+-     }
+- 
+--    /** Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (đệ quy LNR). */
+-+    /**
+-+     * Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (LNR).
+-+     * Phase 4 (Hướng 1): duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
+-+     * thay cho đệ quy, nên không còn tràn call stack của JVM trên cây lệch lớn. Ngăn xếp nằm trên heap,
+-+     * không cấp phát đối tượng cho từng nút; kết quả giống hệt bản đệ quy. Không gian phụ O(h).
+-+     */
+-     public List<BSTNode> inOrderTraversal() {
+-         List<BSTNode> list = new ArrayList<>();
+--        visit(root, list);
+-+        BSTNode[] stack = new BSTNode[64];     // ngăn xếp: các nút đã đi qua nhưng chưa thăm
+-+        int top = 0;                           // số phần tử hiện có trong ngăn xếp
+-+        BSTNode current = root;
+-+        while (current != null || top > 0) {
+-+            while (current != null) {          // đi hết nhánh trái, đẩy từng nút vào ngăn xếp
+-+                if (top == stack.length) {     // đầy: giãn gấp đôi (sao chép thủ công), chi phí chia đều O(1)
+-+                    BSTNode[] bigger = new BSTNode[top * 2];
+-+                    for (int i = 0; i < top; i++) bigger[i] = stack[i];
+-+                    stack = bigger;
+-+                }
+-+                stack[top++] = current;
+-+                current = current.left;
+-+            }
+-+            BSTNode node = stack[--top];       // lấy nút ở đỉnh ngăn xếp
+-+            stack[top] = null;                 // không giữ tham chiếu thừa
+-+            list.add(node);                    // thăm nút (N)
+-+            current = node.right;              // chuyển sang cây con phải (R)
+-+        }
+-         return list;
+-     }
+--
+--    private void visit(BSTNode node, List<BSTNode> list) {
+--        if (node == null) return;
+--        visit(node.left, list);
+--        list.add(node);
+--        visit(node.right, list);
+--    }
+- }
+diff --git a/README.txt b/README.txt
+index 5c3c265..c9deb8e 100644
+--- a/README.txt
++++ b/README.txt
+@@ -1,16 +1,24 @@
+-Group 6 - Warehouse Inventory Management (Phase 4 - Final) - ma nguon + chuong trinh kiem thu + chuong trinh do
++Group 6 - Warehouse Inventory Management - ma nguon + chuong trinh kiem thu + chuong trinh do
+ 
+-Bien dich:    cd src && sh build.sh        (hoac: javac -d out *.java)
+-Kiem thu:     java -cp out MainTest        (56 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien bo sung o Phase 4 + 8 kiem thu duyet in-order lap)
+-              Neu tieng Viet bi loi hien thi tren Windows: chcp 65001 truoc, hoac java -Dstdout.encoding=UTF-8 -cp out MainTest
+-Do hieu nang: java -Xms1g -Xmx2g -cp out Benchmark > bench.csv   (mat khoang 5-8 phut; khong chay viec khac trong luc do)
++Cau truc project:
++  src/main/java/warehouse/model/       Product, Batch
++  src/main/java/warehouse/structure/   BSTNode, BatchQueue, ProductBST
++  src/main/java/warehouse/service/     Inventory
++  src/test/java/warehouse/             MainTest (kiem thu)
++  src/bench/java/warehouse/            Benchmark (do hieu nang)
++  build.sh   bench.csv   GHI_CHU_CODE.md
++
++Bien dich:    sh build.sh        (hoac: javac -encoding UTF-8 -d out $(find src -name '*.java'))
++Kiem thu:     java -cp out warehouse.MainTest     (57 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien + 8 kiem thu duyet in-order lap + 1 kiem thu checkExpiry voi currentDate null)
++              Neu tieng Viet bi loi hien thi tren Windows: chcp 65001 truoc, hoac java -Dstdout.encoding=UTF-8 -cp out warehouse.MainTest
++Do hieu nang: java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv   (mat khoang 5-8 phut; khong chay viec khac trong luc do)
+ 
+ Ghi chu:
+-- Co so cua ma nguon la cai dat tham chieu viet theo thiet ke Phase 2 (Table 8, pseudocode Muc V.A).
+-  Phase 4 bo sung: kiem tra dau vao null (importDate/expiryDate/currentDate) trong receiveBatch/issueStock,
+-  19 kiem thu bien (xoa nut la/1 con/goc, so luong am, HSD = currentDate, xuat dung bang ton...), do lai hieu nang.
++- Co so cua ma nguon la cai dat tham chieu viet theo thiet ke o Table 8 va pseudocode Muc V.A.
++  Bo sung: kiem tra dau vao null (importDate/expiryDate/currentDate) trong receiveBatch/issueStock/checkExpiry,
++  19 kiem thu bien (xoa nut la/1 con/goc, so luong am, HSD = currentDate, xuat dung bang ton...).
+   Toi uu (Muc VII.B): ProductBST.inOrderTraversal doi tu de quy sang duyet lap bang ngan xep mang tu cai dat
+-  (het tran stack tren cay lech lon; khong doi chu ky), kem 8 kiem thu (T6a-T6h trong MainTest).
++  (het tran stack tren cay lech lon; khong doi chu ky), kem 8 kiem thu duyet in-order (T6a-T6h trong MainTest).
+   Viec dung AI de sinh/tham khao ma phai duoc ghi trong AI Audit Log (nop rieng).
+ - bench.csv hien tai do tren may ao Linux 1 loi (Xeon 2.80 GHz, ~4 GB RAM), OpenJDK 21.0.12.1.
+   Hay chay lai Benchmark tren may cua nhom, roi cap nhat Table 13-14 va Figure 9 neu khac.
+diff --git a/build.sh b/build.sh
+new file mode 100644
+index 0000000..f523262
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,6 @@
++#!/bin/sh
++# Biên dịch toàn bộ project vào thư mục out/.
++# Dùng khi chỉ có JRE (module jdk.compiler); nếu có JDK, thay bằng:
++#   javac -encoding UTF-8 -d out $(find src -name '*.java')
++rm -rf out && mkdir out
++java -m jdk.compiler/com.sun.tools.javac.Main -encoding UTF-8 -d out $(find src -name '*.java')
+diff --git a/src/Benchmark.java b/src/bench/java/warehouse/Benchmark.java
+similarity index 98%
+rename from src/Benchmark.java
+rename to src/bench/java/warehouse/Benchmark.java
+index 0b696be..7fdc632 100644
+--- a/src/Benchmark.java
++++ b/src/bench/java/warehouse/Benchmark.java
+@@ -1,3 +1,12 @@
++package warehouse;
++
++import warehouse.model.Batch;
++import warehouse.model.Product;
++import warehouse.service.Inventory;
++import warehouse.structure.BSTNode;
++import warehouse.structure.BatchQueue;
++import warehouse.structure.ProductBST;
++
+ import java.lang.reflect.Field;
+ import java.time.LocalDate;
+ import java.util.ArrayList;
+diff --git a/src/build.sh b/src/build.sh
+deleted file mode 100644
+index a25cfd6..0000000
+--- a/src/build.sh
++++ /dev/null
+@@ -1,4 +0,0 @@
+-#!/bin/sh
+-# Biên dịch bằng module jdk.compiler (dùng khi chỉ có JRE) hoặc thay bằng: javac -d out *.java
+-rm -rf out && mkdir out
+-java -m jdk.compiler/com.sun.tools.javac.Main -d out *.java
+diff --git a/src/Batch.java b/src/main/java/warehouse/model/Batch.java
+similarity index 97%
+rename from src/Batch.java
+rename to src/main/java/warehouse/model/Batch.java
+index 397124a..ecabc40 100644
+--- a/src/Batch.java
++++ b/src/main/java/warehouse/model/Batch.java
+@@ -1,3 +1,5 @@
++package warehouse.model;
++
+ import java.time.LocalDate;
+ 
+ /** Một lô hàng của một sản phẩm (Table 8). */
+diff --git a/src/Product.java b/src/main/java/warehouse/model/Product.java
+similarity index 96%
+rename from src/Product.java
+rename to src/main/java/warehouse/model/Product.java
+index fa9e060..0de1ecb 100644
+--- a/src/Product.java
++++ b/src/main/java/warehouse/model/Product.java
+@@ -1,3 +1,5 @@
++package warehouse.model;
++
+ /** Thông tin định danh của sản phẩm (Table 8). */
+ public class Product {
+     private final String barcode;
+diff --git a/src/Inventory.java b/src/main/java/warehouse/service/Inventory.java
+similarity index 92%
+rename from src/Inventory.java
+rename to src/main/java/warehouse/service/Inventory.java
+index 8dfb4e4..18bdfa4 100644
+--- a/src/Inventory.java
++++ b/src/main/java/warehouse/service/Inventory.java
+@@ -1,3 +1,10 @@
++package warehouse.service;
++
++import warehouse.model.Batch;
++import warehouse.model.Product;
++import warehouse.structure.BSTNode;
++import warehouse.structure.BatchQueue;
++import warehouse.structure.ProductBST;
+ import java.time.LocalDate;
+ import java.time.temporal.ChronoUnit;
+ import java.util.ArrayList;
+@@ -61,9 +68,10 @@ public class Inventory {
+         return true;
+     }
+ 
+-    /** Mục 4.1 - Θ(n + B). Mỗi phần tử: "barcode|batchId|quantity|trạng thái". */
++    /** Mục 4.1 - Θ(n + B). Mỗi phần tử: "barcode|batchId|quantity|trạng thái". currentDate null thì trả về danh sách rỗng. */
+     public List<String> checkExpiry(LocalDate currentDate, int K) {
+         List<String> expiryList = new ArrayList<>();
++        if (currentDate == null) return expiryList;
+         LocalDate limit = currentDate.plusDays(K);
+         for (BSTNode node : productBST.inOrderTraversal()) {
+             for (Batch b : node.getBatchQueue().toList()) {
+diff --git a/src/BSTNode.java b/src/main/java/warehouse/structure/BSTNode.java
+similarity index 88%
+rename from src/BSTNode.java
+rename to src/main/java/warehouse/structure/BSTNode.java
+index 81e75c1..420810c 100644
+--- a/src/BSTNode.java
++++ b/src/main/java/warehouse/structure/BSTNode.java
+@@ -1,3 +1,7 @@
++package warehouse.structure;
++
++import warehouse.model.Product;
++
+ /** Nút của cây tìm kiếm: một Product và BatchQueue của sản phẩm đó (Table 8). */
+ public class BSTNode {
+     public Product product;
+diff --git a/src/BatchQueue.java b/src/main/java/warehouse/structure/BatchQueue.java
+similarity index 96%
+rename from src/BatchQueue.java
+rename to src/main/java/warehouse/structure/BatchQueue.java
+index d27d41c..4c10f46 100644
+--- a/src/BatchQueue.java
++++ b/src/main/java/warehouse/structure/BatchQueue.java
+@@ -1,3 +1,7 @@
++package warehouse.structure;
++
++import warehouse.model.Batch;
++
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+diff --git a/src/ProductBST.java b/src/main/java/warehouse/structure/ProductBST.java
+similarity index 95%
+rename from src/ProductBST.java
+rename to src/main/java/warehouse/structure/ProductBST.java
+index 1f0dfab..6b69a21 100644
+--- a/src/ProductBST.java
++++ b/src/main/java/warehouse/structure/ProductBST.java
+@@ -1,3 +1,7 @@
++package warehouse.structure;
++
++import warehouse.model.Product;
++
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+@@ -69,7 +73,7 @@ public class ProductBST {
+ 
+     /**
+      * Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (LNR).
+-     * Phase 4 (Hướng 1): duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
++     * Duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
+      * thay cho đệ quy, nên không còn tràn call stack của JVM trên cây lệch lớn. Ngăn xếp nằm trên heap,
+      * không cấp phát đối tượng cho từng nút; kết quả giống hệt bản đệ quy. Không gian phụ O(h).
+      */
+diff --git a/src/MainTest.java b/src/test/java/warehouse/MainTest.java
+similarity index 93%
+rename from src/MainTest.java
+rename to src/test/java/warehouse/MainTest.java
+index b72fcec..adcfcfa 100644
+--- a/src/MainTest.java
++++ b/src/test/java/warehouse/MainTest.java
+@@ -1,3 +1,12 @@
++package warehouse;
++
++import warehouse.model.Batch;
++import warehouse.model.Product;
++import warehouse.service.Inventory;
++import warehouse.structure.BSTNode;
++import warehouse.structure.BatchQueue;
++import warehouse.structure.ProductBST;
++
+ import java.time.LocalDate;
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -23,7 +32,7 @@ public class MainTest {
+     }
+ 
+ 
+-    // ---- Phase 4 (tối ưu Hướng 1): hỗ trợ kiểm thử duyệt in-order lặp ----
++    // ---- Hỗ trợ kiểm thử duyệt in-order lặp (Mục VII.B) ----
+     static void refInOrder(BSTNode n, List<BSTNode> out) {      // bản đệ quy tham chiếu để đối chiếu
+         if (n == null) return;
+         refInOrder(n.left, out); out.add(n); refInOrder(n.right, out);
+@@ -131,8 +140,8 @@ public class MainTest {
+         check("T5 sản phẩm chưa có lô: tổng 0, số lô 0", inv2.generateInventoryReport().get(1).equals("8930002|Nuoc|chai|5|0|0|-"));
+ 
+ 
+-        // ---- Bổ sung Phase 4: biên và nhánh chưa được phủ ở Phase 3 ----
+-        // Delete: nút lá và nút có 1 con (Phase 3 mới test nút có 2 con)
++        // ---- Kiểm thử biên và các nhánh bổ sung ----
++        // Delete: nút lá và nút có 1 con
+         ProductBST d = new ProductBST();
+         for (String c : new String[]{"M", "F", "T", "A", "H", "P"}) d.insert(new Product(c, c, "u", 0));
+         //          M
+@@ -204,7 +213,7 @@ public class MainTest {
+                 rp6.size() == 3 && rp6.get(0).startsWith("100|") && rp6.get(1).startsWith("200|") && rp6.get(2).startsWith("300|"));
+         check("T4b checkExpiry không có lô nào cần chú ý -> danh sách rỗng", new Inventory().checkExpiry(d(7, 10), 5).isEmpty());
+ 
+-        // ===== Phase 4 - Tối ưu Hướng 1: inOrderTraversal lặp (T6x) =====
++        // ===== Tối ưu: inOrderTraversal lặp (T6x) =====
+         check("T6a inOrderTraversal: cây rỗng -> danh sách rỗng", new ProductBST().inOrderTraversal().isEmpty());
+         ProductBST single = new ProductBST();
+         single.insert(new Product("X", "x", "u", 0));
+@@ -238,6 +247,15 @@ public class MainTest {
+         check("T6h checkExpiry và generateInventoryReport chạy được trên cây lệch 200.000 nút",
+                 invS.checkExpiry(d(7, 10), 5).size() == 1 && invS.generateInventoryReport().size() == BIG);
+ 
++        // T7: checkExpiry với currentDate null phải trả về danh sách rỗng, không ném NullPointerException
++        Inventory invN = milkInventory();
++        boolean noThrow = true;
++        List<String> nullRes = null;
++        try { nullRes = invN.checkExpiry(null, 5); } catch (RuntimeException e) { noThrow = false; }
++        check("T7 checkExpiry(null, 5): trả về danh sách rỗng, không ném NullPointerException, hàng đợi không đổi",
++                noThrow && nullRes != null && nullRes.isEmpty()
++                && invN.getProductBST().search("8930001").getBatchQueue().size() == 3);
++
+         System.out.println("\nKết quả: " + pass + " PASS, " + fail + " FAIL");
+         if (fail > 0) System.exit(1);
+     }

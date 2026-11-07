@@ -1,15 +1,21 @@
+package warehouse.service;
+
+import warehouse.model.Batch;
+import warehouse.model.Product;
+import warehouse.structure.BSTNode;
+import warehouse.structure.BatchQueue;
+import warehouse.structure.ProductBST;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Điều phối nghiệp vụ (Mục V.A 2.2, 3.2, 4.1, 5.1). Quy ước hết hạn: expiryDate < currentDate. */
+/** Business-logic coordinator (pseudocode V.A 2.2, 3.2, 4.1, 5.1). Expiry rule: a batch is expired only if expiryDate < currentDate. */
 public class Inventory {
     private final ProductBST productBST = new ProductBST();
 
     public ProductBST getProductBST() { return productBST; }
 
-    /** Mục 2.2 - O(h). */
+    /** Pseudocode 2.2 - O(h). */
     public boolean receiveBatch(String barcode, Batch batch) {
         if (barcode == null || barcode.isEmpty() || batch == null) return false;
         if (batch.getImportDate() == null || batch.getExpiryDate() == null) return false;
@@ -22,8 +28,8 @@ public class Inventory {
     }
 
     /**
-     * Mục 3.2 - O(h + k). Kết quả chi tiết trả qua issuedList ("batchId:số lượng")
-     * và expiredList (lô hết hạn đã bị loại). Từ chối thì hàng đợi giữ nguyên.
+     * Pseudocode 3.2 - O(h + k). Details are returned through issuedList ("batchId:quantity")
+     * and expiredList (expired batches that were discarded). If the request is rejected the queue is left unchanged.
      */
     public boolean issueStock(String barcode, int quantity, LocalDate currentDate,
                               List<String> issuedList, List<String> expiredList) {
@@ -32,14 +38,14 @@ public class Inventory {
         if (node == null) return false;
         BatchQueue queue = node.getBatchQueue();
 
-        // Giai đoạn kiểm tra (chỉ đọc)
+        // Check phase (read-only)
         long available = 0;
         for (Batch b : queue.toList()) {
             if (!b.getExpiryDate().isBefore(currentDate)) available += b.getQuantity();
         }
         if (available < quantity) return false;
 
-        // Giai đoạn xuất
+        // Issue phase
         int remaining = quantity;
         while (remaining > 0) {
             Batch b = queue.peek();
@@ -61,9 +67,10 @@ public class Inventory {
         return true;
     }
 
-    /** Mục 4.1 - Θ(n + B). Mỗi phần tử: "barcode|batchId|quantity|trạng thái". */
+    /** Pseudocode 4.1 - Θ(n + B). Each element: "barcode|batchId|quantity|status". Returns an empty list if currentDate is null. */
     public List<String> checkExpiry(LocalDate currentDate, int K) {
         List<String> expiryList = new ArrayList<>();
+        if (currentDate == null) return expiryList;
         LocalDate limit = currentDate.plusDays(K);
         for (BSTNode node : productBST.inOrderTraversal()) {
             for (Batch b : node.getBatchQueue().toList()) {
@@ -77,7 +84,7 @@ public class Inventory {
         return expiryList;
     }
 
-    /** Mục 5.1 - Θ(n + B). Mỗi dòng: "barcode|name|unit|minStock|tổng SL|số lô|HSD sớm nhất". */
+    /** Pseudocode 5.1 - Θ(n + B). Each line: "barcode|name|unit|minStock|total quantity|batch count|earliest expiry date". */
     public List<String> generateInventoryReport() {
         List<String> report = new ArrayList<>();
         for (BSTNode node : productBST.inOrderTraversal()) {

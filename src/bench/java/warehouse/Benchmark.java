@@ -1,21 +1,28 @@
+package warehouse;
+
+import warehouse.model.Batch;
+import warehouse.model.Product;
+import warehouse.service.Inventory;
+import warehouse.structure.BSTNode;
+import warehouse.structure.BatchQueue;
+import warehouse.structure.ProductBST;
+
 import java.lang.reflect.Field;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 
 /**
- * Đo hiệu năng thực tế (Mục VI.C). Cách đo: System.nanoTime(); warm-up 5 lần (bỏ qua),
- * sau đó đo 10 lần và lấy trung bình; mỗi lần đo gồm nhiều lượt thao tác rồi chia lấy thời gian trung bình/1 thao tác.
- * Kết quả ghi ra stdout dạng CSV: operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us
+ * Measures real running time (report section VI.C). Method: System.nanoTime(); 5 warm-up runs (discarded),
+ * then 10 measured runs averaged; each run executes many operations and divides to get the time per operation.
+ * Output is written to stdout as CSV: operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us
  */
 public class Benchmark {
     static final int WARMUP = 5, REPS = 10;
-    static volatile long sink;                       // chống JIT loại bỏ code
+    static volatile long sink;                       // prevents the JIT from eliminating code
     static final LocalDate TODAY = LocalDate.of(2026, 11, 15);
 
-    interface Rep { double run(); }                   // trả về micro-giây / 1 thao tác
+    interface Rep { double run(); }                   // returns microseconds per operation
 
     static void measure(String op, int n, int k, Rep rep) { measure(op, n, k, WARMUP, REPS, rep); }
 
@@ -62,7 +69,7 @@ public class Benchmark {
         return t;
     }
 
-    /** Dựng cây lệch (barcode tăng dần) bằng cách nối thẳng nút phải, tránh chi phí O(n^2) khi dựng cây lớn. */
+    /** Builds a skewed tree (ascending barcodes) by linking right children directly, avoiding the O(n^2) cost of building a large skewed tree with insert. */
     static ProductBST skewedTree(int n) throws Exception {
         ProductBST t = new ProductBST();
         BSTNode first = new BSTNode(new Product(key(0), "P0", "pcs", 10)), last = first;
@@ -97,19 +104,19 @@ public class Benchmark {
         System.out.println("operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us");
         int[] sizes = {1_000, 10_000, 50_000, 100_000};
 
-        // 1) search, cây ngẫu nhiên
+        // 1) search, random tree
         for (int n : sizes) {
             ProductBST t = randomTree(products(n));
             String[] qs = queryKeys(n, 100_000, 7);
             measure("search_random", n, 0, () -> searchRep(t, qs));
         }
-        // 2) search, cây lệch (barcode tăng dần)
+        // 2) search, skewed tree (ascending barcodes)
         for (int n : sizes) {
             ProductBST t = skewedTree(n);
             String[] qs = queryKeys(n, Math.max(1_000, 100_000_000 / n), 7);
             measure("search_skewed", n, 0, () -> searchRep(t, qs));
         }
-        // 3) insert, cây ngẫu nhiên: dựng cây n phần tử từ rỗng, thời gian trung bình / 1 lần insert
+        // 3) insert, random tree: build an n-element tree from empty; average time per insert
         for (int n : sizes) {
             Product[] ps = products(n);
             int loops = Math.max(1, 200_000 / n);
@@ -125,7 +132,7 @@ public class Benchmark {
                 return total / 1000.0 / ((double) loops * n);
             });
         }
-        // 4) insert, barcode tăng dần (cây lệch)
+        // 4) insert, ascending barcodes (skewed tree)
         for (int n : new int[]{1_000, 5_000, 10_000, 20_000}) {
             Product[] ps = new Product[n];
             for (int i = 0; i < n; i++) ps[i] = new Product(key(i), "P" + i, "pcs", 10);
@@ -138,7 +145,7 @@ public class Benchmark {
                 return el / 1000.0 / n;
             });
         }
-        // 5) enqueue / dequeue: hàng đợi n lô
+        // 5) enqueue / dequeue: queue of n batches
         for (int n : new int[]{1_000, 10_000, 100_000, 1_000_000}) {
             Batch[] bs = new Batch[n];
             for (int i = 0; i < n; i++) bs[i] = new Batch("B" + i, TODAY, TODAY.plusDays(30), 1);
@@ -164,7 +171,7 @@ public class Benchmark {
             measure("enqueue", n, 0, both);
             measure("dequeue", n, 0, () -> { both.run(); return last[1]; });
         }
-        // 6) issueStock xuất 1 đơn vị: phụ thuộc n (k = 10 lô) -> O(h + k)
+        // 6) issueStock issuing 1 unit: depends on n (k = 10 batches) -> O(h + k)
         for (int n : sizes) {
             Inventory inv = new Inventory();
             Product[] ps = products(n);
@@ -175,7 +182,7 @@ public class Benchmark {
                 BatchQueue q = t.search(s).batchQueue;
                 if (q.isEmpty()) for (int j = 0; j < 10; j++) q.enqueue(new Batch("B" + j, TODAY, TODAY.plusDays(30), 1_000_000_000));
             }
-            String[] qs = queryKeys(n, 1_000, 11);       // cùng tập khóa với probe
+            String[] qs = queryKeys(n, 1_000, 11);       // same key set as the probe
             measure("issueStock_1unit", n, 10, () -> {
                 long t0 = System.nanoTime();
                 int ok = 0;
@@ -185,7 +192,7 @@ public class Benchmark {
                 return el / 1000.0 / (100.0 * qs.length);
             });
         }
-        // 7) issueStock: phụ thuộc k (n = 1000), (a) xuất 1 đơn vị, (b) xuất hết k lô
+        // 7) issueStock: depends on k (n = 1000), (a) issue 1 unit, (b) drain all k batches
         for (int k : new int[]{10, 100, 1_000, 10_000}) {
             Inventory inv = new Inventory();
             for (Product p : products(1_000)) inv.getProductBST().insert(p);
@@ -196,7 +203,7 @@ public class Benchmark {
             for (Batch b : bs) q.enqueue(b);
             int calls = Math.max(100, 2_000_000 / k);
             measure("issueStock_1unit", 1_000, k, () -> {
-                // đưa tồn lên đủ lớn để không cạn: dùng lô đầu có số lượng rất lớn
+                // make stock large enough not to run out: the first batch has a very large quantity
                 q.peek().setQuantity(1_000_000_000);
                 long t0 = System.nanoTime();
                 int ok = 0;
@@ -210,7 +217,7 @@ public class Benchmark {
                 long total = 0;
                 for (int i = 0; i < drains; i++) {
                     while (q.dequeue() != null) { }
-                    for (Batch b : bs) { b.setQuantity(1); q.enqueue(b); }       // nạp lại (không tính giờ)
+                    for (Batch b : bs) { b.setQuantity(1); q.enqueue(b); }       // refill (not timed)
                     long t0 = System.nanoTime();
                     boolean ok = inv.issueStock(target, k, TODAY, null, null);
                     total += System.nanoTime() - t0;
@@ -219,7 +226,7 @@ public class Benchmark {
                 return total / 1000.0 / drains;
             });
         }
-        // 8) checkExpiry và generateInventoryReport: n sản phẩm, mỗi sản phẩm 5 lô (B = 5n)
+        // 8) checkExpiry and generateInventoryReport: n products, 5 batches each (B = 5n)
         for (int n : sizes) {
             Inventory inv = new Inventory();
             Random r = new Random(5);

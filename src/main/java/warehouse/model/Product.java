@@ -1,4 +1,6 @@
-/** Thông tin định danh của sản phẩm (Table 8). */
+package warehouse.model;
+
+/** Identity information of a product (Table 8). */
 public class Product {
     private final String barcode;
     private String name;

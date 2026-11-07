@@ -1,13 +1,17 @@
+package warehouse.structure;
+
+import warehouse.model.Product;
+
 import java.util.ArrayList;
 import java.util.List;
 
-/** Cây nhị phân tìm kiếm (không tự cân bằng) theo barcode (Mục V.A 1.1 - 1.4). */
+/** Binary search tree (not self-balancing) keyed by barcode (pseudocode V.A 1.1 - 1.4). */
 public class ProductBST {
     private BSTNode root;
 
     public BSTNode getRoot() { return root; }
 
-    /** Mục 1.2 - O(h), cài đặt lặp. */
+    /** Pseudocode 1.2 - O(h), iterative implementation. */
     public BSTNode search(String barcode) {
         BSTNode current = root;
         while (current != null) {
@@ -18,7 +22,7 @@ public class ProductBST {
         return null;
     }
 
-    /** Mục 1.1 - O(h); trả về false nếu trùng barcode. */
+    /** Pseudocode 1.1 - O(h); returns false if the barcode already exists. */
     public boolean insert(Product product) {
         if (root == null) {
             root = new BSTNode(product);
@@ -38,8 +42,8 @@ public class ProductBST {
     }
 
     /**
-     * Mục 1.3 - O(h). Tiền điều kiện: sản phẩm tồn tại và BatchQueue của nó rỗng;
-     * nếu không thì từ chối (trả về false) và cây không đổi.
+     * Pseudocode 1.3 - O(h). Precondition: the product exists and its BatchQueue is empty;
+     * otherwise the request is rejected (returns false) and the tree is unchanged.
      */
     public boolean delete(String barcode) {
         BSTNode node = search(barcode);
@@ -61,26 +65,26 @@ public class ProductBST {
             BSTNode min = node.right;
             while (min.left != null) min = min.left;      // FindMin
             node.product = min.product;
-            node.batchQueue = min.batchQueue;               // sao chép tham chiếu
+            node.batchQueue = min.batchQueue;               // copy the reference
             node.right = deleteNode(node.right, min.product.getBarcode());
         }
         return node;
     }
 
     /**
-     * Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (LNR).
-     * Phase 4 (Hướng 1): duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
-     * thay cho đệ quy, nên không còn tràn call stack của JVM trên cây lệch lớn. Ngăn xếp nằm trên heap,
-     * không cấp phát đối tượng cho từng nút; kết quả giống hệt bản đệ quy. Không gian phụ O(h).
+     * Pseudocode 1.4 - Θ(n): nodes in ascending barcode order (LNR).
+     * Traversal uses a loop with a hand-written array stack (doubles its capacity when full)
+     * instead of recursion, so the JVM call stack can no longer overflow on large skewed trees. The stack lives on the heap,
+     * allocates no object per node, and yields exactly the same result as the recursive version. Extra space O(h).
      */
     public List<BSTNode> inOrderTraversal() {
         List<BSTNode> list = new ArrayList<>();
-        BSTNode[] stack = new BSTNode[64];     // ngăn xếp: các nút đã đi qua nhưng chưa thăm
-        int top = 0;                           // số phần tử hiện có trong ngăn xếp
+        BSTNode[] stack = new BSTNode[64];     // stack: nodes passed on the way down but not yet visited
+        int top = 0;                           // number of elements currently in the stack
         BSTNode current = root;
         while (current != null || top > 0) {
-            while (current != null) {          // đi hết nhánh trái, đẩy từng nút vào ngăn xếp
-                if (top == stack.length) {     // đầy: giãn gấp đôi (sao chép thủ công), chi phí chia đều O(1)
+            while (current != null) {          // walk down the left branch, pushing each node
+                if (top == stack.length) {     // full: double the capacity (manual copy), amortized O(1)
                     BSTNode[] bigger = new BSTNode[top * 2];
                     for (int i = 0; i < top; i++) bigger[i] = stack[i];
                     stack = bigger;
@@ -88,10 +92,10 @@ public class ProductBST {
                 stack[top++] = current;
                 current = current.left;
             }
-            BSTNode node = stack[--top];       // lấy nút ở đỉnh ngăn xếp
-            stack[top] = null;                 // không giữ tham chiếu thừa
-            list.add(node);                    // thăm nút (N)
-            current = node.right;              // chuyển sang cây con phải (R)
+            BSTNode node = stack[--top];       // pop the node on top of the stack
+            stack[top] = null;                 // do not keep a stale reference
+            list.add(node);                    // visit the node (N)
+            current = node.right;              // move to the right subtree (R)
         }
         return list;
     }

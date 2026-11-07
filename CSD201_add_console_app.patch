@@ -1,0 +1,430 @@
+diff --git a/GHI_CHU_CODE.md b/GHI_CHU_CODE.md
+index 39f6fc8..6dc461d 100644
+--- a/GHI_CHU_CODE.md
++++ b/GHI_CHU_CODE.md
+@@ -1,7 +1,10 @@
+ # Ghi chú đọc hiểu mã nguồn (để bảo vệ / trả lời vấn đáp)
+ 
+ ## Cấu trúc project
+-`model` (Product, Batch) · `structure` (BSTNode, BatchQueue, ProductBST) · `service` (Inventory); kiểm thử ở `src/test`, đo hiệu năng ở `src/bench`.
++`model` (Product, Batch) · `structure` (BSTNode, BatchQueue, ProductBST) · `service` (Inventory); chương trình menu ở `app` (`WarehouseApp`, `CsvStore`); kiểm thử ở `src/test`, đo hiệu năng ở `src/bench`.
++
++## Chương trình menu và lưu CSV
++`WarehouseApp` chỉ gọi lại `Inventory`/`ProductBST` (không chứa logic nghiệp vụ mới). `CsvStore` ghi sản phẩm theo thứ tự **tiền thứ tự (NLR)** để nạp lại cây có đúng hình dạng cũ; ghi theo barcode tăng dần sẽ làm cây nạp lại bị lệch thành danh sách liên kết (h = n). Các lô được ghi đúng thứ tự hàng đợi FIFO. Lô hết hạn đã bị `issueStock` loại khỏi hàng đợi thì không còn trong file lưu.
+ 
+ ## Bức tranh chung
+ `Inventory` → dùng `ProductBST` (tìm sản phẩm theo barcode) → mỗi `BSTNode` giữ 1 `Product` + 1 `BatchQueue` → hàng đợi chứa các `Batch`.
+diff --git a/README.txt b/README.txt
+index c9deb8e..8ac064e 100644
+--- a/README.txt
++++ b/README.txt
+@@ -4,11 +4,15 @@ Cau truc project:
+   src/main/java/warehouse/model/       Product, Batch
+   src/main/java/warehouse/structure/   BSTNode, BatchQueue, ProductBST
+   src/main/java/warehouse/service/     Inventory
++  src/main/java/warehouse/app/         WarehouseApp (chuong trinh menu dong lenh), CsvStore (luu/nap CSV)
+   src/test/java/warehouse/             MainTest (kiem thu)
+   src/bench/java/warehouse/            Benchmark (do hieu nang)
++  data/      products.csv, batches.csv (du lieu mau, chuong trinh tu doc/ghi)
+   build.sh   bench.csv   GHI_CHU_CODE.md
+ 
+ Bien dich:    sh build.sh        (hoac: javac -encoding UTF-8 -d out $(find src -name '*.java'))
++Chay he thong: java -cp out warehouse.app.WarehouseApp [thu_muc_du_lieu]   (mac dinh ./data; doc va ghi products.csv, batches.csv)
++              Neu tieng Viet loi tren Windows: chcp 65001 truoc khi chay
+ Kiem thu:     java -cp out warehouse.MainTest     (57 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien + 8 kiem thu duyet in-order lap + 1 kiem thu checkExpiry voi currentDate null)
+               Neu tieng Viet bi loi hien thi tren Windows: chcp 65001 truoc, hoac java -Dstdout.encoding=UTF-8 -cp out warehouse.MainTest
+ Do hieu nang: java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv   (mat khoang 5-8 phut; khong chay viec khac trong luc do)
+diff --git a/data/batches.csv b/data/batches.csv
+new file mode 100644
+index 0000000..3525113
+--- /dev/null
++++ b/data/batches.csv
+@@ -0,0 +1,7 @@
++barcode,batchId,importDate,expiryDate,quantity
++8930001,B01,2026-09-01,2026-10-01,50
++8930001,B02,2026-09-05,2026-10-05,60
++8930001,B03,2026-09-10,2026-12-10,40
++8930001,B04,2026-09-14,2026-12-14,80
++8930002,N01,2026-10-01,2027-04-01,200
++8930003,K01,2026-10-20,2026-11-20,30
+diff --git a/data/products.csv b/data/products.csv
+new file mode 100644
+index 0000000..53cab60
+--- /dev/null
++++ b/data/products.csv
+@@ -0,0 +1,4 @@
++barcode,name,unit,minStock
++8930001,Sua tuoi,hop,20
++8930002,Nuoc suoi,chai,5
++8930003,Banh quy,goi,10
+diff --git a/src/main/java/warehouse/app/CsvStore.java b/src/main/java/warehouse/app/CsvStore.java
+new file mode 100644
+index 0000000..61f120a
+--- /dev/null
++++ b/src/main/java/warehouse/app/CsvStore.java
+@@ -0,0 +1,157 @@
++package warehouse.app;
++
++import warehouse.model.Batch;
++import warehouse.model.Product;
++import warehouse.service.Inventory;
++import warehouse.structure.BSTNode;
++
++import java.io.BufferedReader;
++import java.io.BufferedWriter;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.time.LocalDate;
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.Deque;
++import java.util.List;
++
++/**
++ * Lưu và nạp kho từ hai file CSV (UTF-8):
++ *   products.csv: barcode,name,unit,minStock
++ *   batches.csv : barcode,batchId,importDate,expiryDate,quantity   (theo đúng thứ tự hàng đợi FIFO của từng sản phẩm)
++ * Sản phẩm được ghi theo thứ tự tiền thứ tự (NLR) để khi nạp lại cây BST có đúng hình dạng cũ
++ * (ghi theo thứ tự barcode tăng dần sẽ làm cây nạp lại bị lệch thành danh sách liên kết).
++ */
++public class CsvStore {
++    private static final String PRODUCT_HEADER = "barcode,name,unit,minStock";
++    private static final String BATCH_HEADER = "barcode,batchId,importDate,expiryDate,quantity";
++
++    private final Path productFile;
++    private final Path batchFile;
++
++    public CsvStore(Path dir) {
++        this.productFile = dir.resolve("products.csv");
++        this.batchFile = dir.resolve("batches.csv");
++    }
++
++    /** Nạp dữ liệu vào inventory; trả về danh sách cảnh báo (dòng lỗi bị bỏ qua). File chưa có thì coi như kho rỗng. */
++    public List<String> load(Inventory inv) throws IOException {
++        List<String> warnings = new ArrayList<>();
++        if (Files.exists(productFile)) {
++            int no = 0;
++            for (String line : readLines(productFile)) {
++                no++;
++                if (no == 1 || line.trim().isEmpty()) continue;
++                List<String> f = parse(line);
++                try {
++                    if (f.size() != 4) throw new IllegalArgumentException("cần 4 cột");
++                    boolean ok = inv.getProductBST().insert(
++                            new Product(f.get(0).trim(), f.get(1), f.get(2), Integer.parseInt(f.get(3).trim())));
++                    if (!ok) warnings.add(productFile.getFileName() + " dòng " + no + ": trùng barcode, bỏ qua");
++                } catch (RuntimeException e) {
++                    warnings.add(productFile.getFileName() + " dòng " + no + ": " + e.getMessage());
++                }
++            }
++        }
++        if (Files.exists(batchFile)) {
++            int no = 0;
++            for (String line : readLines(batchFile)) {
++                no++;
++                if (no == 1 || line.trim().isEmpty()) continue;
++                List<String> f = parse(line);
++                try {
++                    if (f.size() != 5) throw new IllegalArgumentException("cần 5 cột");
++                    Batch b = new Batch(f.get(1).trim(), LocalDate.parse(f.get(2).trim()),
++                            LocalDate.parse(f.get(3).trim()), Integer.parseInt(f.get(4).trim()));
++                    if (!inv.receiveBatch(f.get(0).trim(), b))
++                        warnings.add(batchFile.getFileName() + " dòng " + no + ": lô không hợp lệ hoặc sản phẩm chưa có, bỏ qua");
++                } catch (RuntimeException e) {
++                    warnings.add(batchFile.getFileName() + " dòng " + no + ": " + e.getMessage());
++                }
++            }
++        }
++        return warnings;
++    }
++
++    /** Ghi toàn bộ kho ra hai file CSV (tạo thư mục nếu chưa có). */
++    public void save(Inventory inv) throws IOException {
++        Files.createDirectories(productFile.toAbsolutePath().getParent());
++        List<BSTNode> preorder = preorder(inv);
++        try (BufferedWriter w = Files.newBufferedWriter(productFile, StandardCharsets.UTF_8)) {
++            w.write(PRODUCT_HEADER); w.newLine();
++            for (BSTNode n : preorder) {
++                Product p = n.getProduct();
++                w.write(join(p.getBarcode(), p.getName(), p.getUnit(), String.valueOf(p.getMinStock()))); w.newLine();
++            }
++        }
++        try (BufferedWriter w = Files.newBufferedWriter(batchFile, StandardCharsets.UTF_8)) {
++            w.write(BATCH_HEADER); w.newLine();
++            for (BSTNode n : preorder) {
++                for (Batch b : n.getBatchQueue().toList()) {
++                    w.write(join(n.getProduct().getBarcode(), b.getBatchId(), b.getImportDate().toString(),
++                            b.getExpiryDate().toString(), String.valueOf(b.getQuantity()))); w.newLine();
++                }
++            }
++        }
++    }
++
++    /** Duyệt NLR bằng vòng lặp (không đệ quy, không tràn stack trên cây lệch). */
++    private static List<BSTNode> preorder(Inventory inv) {
++        List<BSTNode> out = new ArrayList<>();
++        Deque<BSTNode> stack = new ArrayDeque<>();
++        if (inv.getProductBST().getRoot() != null) stack.push(inv.getProductBST().getRoot());
++        while (!stack.isEmpty()) {
++            BSTNode n = stack.pop();
++            out.add(n);
++            if (n.right != null) stack.push(n.right);
++            if (n.left != null) stack.push(n.left);
++        }
++        return out;
++    }
++
++    private static List<String> readLines(Path file) throws IOException {
++        List<String> lines = new ArrayList<>();
++        try (BufferedReader r = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
++            String s;
++            while ((s = r.readLine()) != null) lines.add(s);
++        }
++        if (!lines.isEmpty() && lines.get(0).startsWith("\uFEFF")) lines.set(0, lines.get(0).substring(1)); // BOM của Excel
++        return lines;
++    }
++
++    private static String join(String... fields) {
++        StringBuilder sb = new StringBuilder();
++        for (int i = 0; i < fields.length; i++) {
++            if (i > 0) sb.append(',');
++            sb.append(quote(fields[i]));
++        }
++        return sb.toString();
++    }
++
++    private static String quote(String s) {
++        if (s.indexOf(',') >= 0 || s.indexOf('"') >= 0) return "\"" + s.replace("\"", "\"\"") + "\"";
++        return s;
++    }
++
++    /** Tách một dòng CSV, hỗ trợ trường đặt trong dấu nháy kép. */
++    static List<String> parse(String line) {
++        List<String> out = new ArrayList<>();
++        StringBuilder cur = new StringBuilder();
++        boolean inQuotes = false;
++        for (int i = 0; i < line.length(); i++) {
++            char c = line.charAt(i);
++            if (inQuotes) {
++                if (c == '"') {
++                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') { cur.append('"'); i++; }
++                    else inQuotes = false;
++                } else cur.append(c);
++            } else if (c == '"') inQuotes = true;
++            else if (c == ',') { out.add(cur.toString()); cur.setLength(0); }
++            else cur.append(c);
++        }
++        out.add(cur.toString());
++        return out;
++    }
++}
+diff --git a/src/main/java/warehouse/app/WarehouseApp.java b/src/main/java/warehouse/app/WarehouseApp.java
+new file mode 100644
+index 0000000..e7a1d54
+--- /dev/null
++++ b/src/main/java/warehouse/app/WarehouseApp.java
+@@ -0,0 +1,202 @@
++package warehouse.app;
++
++import warehouse.model.Batch;
++import warehouse.model.Product;
++import warehouse.service.Inventory;
++import warehouse.structure.BSTNode;
++
++import java.io.IOException;
++import java.io.PrintStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Path;
++import java.nio.file.Paths;
++import java.time.LocalDate;
++import java.time.format.DateTimeFormatter;
++import java.time.format.DateTimeParseException;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.NoSuchElementException;
++import java.util.Scanner;
++
++/**
++ * Chương trình quản lý kho dạng menu dòng lệnh, gọi các nghiệp vụ của Inventory (Mục V.A).
++ * Chạy: java -cp out warehouse.app.WarehouseApp [thư_mục_dữ_liệu]   (mặc định: ./data)
++ */
++public class WarehouseApp {
++    private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
++
++    private final Inventory inv = new Inventory();
++    private final Scanner in;
++    private final PrintStream out;
++    private final CsvStore store;
++
++    public WarehouseApp(Scanner in, PrintStream out, Path dataDir) {
++        this.in = in;
++        this.out = out;
++        this.store = new CsvStore(dataDir);
++    }
++
++    public static void main(String[] args) throws Exception {
++        Path dir = Paths.get(args.length > 0 ? args[0] : "data");
++        PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
++        new WarehouseApp(new Scanner(System.in, StandardCharsets.UTF_8), out, dir).run();
++    }
++
++    // ------------------------------------------------------------------ vòng lặp chính
++    public void run() {
++        out.println("=== HỆ THỐNG QUẢN LÝ KHO (BST + Queue FIFO) ===");
++        try {
++            List<String> warnings = store.load(inv);
++            for (String w : warnings) out.println("Cảnh báo khi nạp dữ liệu: " + w);
++            out.println("Đã nạp " + inv.getProductBST().inOrderTraversal().size() + " sản phẩm.");
++        } catch (IOException e) {
++            out.println("Không đọc được dữ liệu: " + e.getMessage() + " (bắt đầu với kho rỗng)");
++        }
++        try {
++            while (true) {
++                printMenu();
++                String choice = ask("Chọn chức năng");
++                switch (choice) {
++                    case "1": addProduct(); break;
++                    case "2": lookupProduct(); break;
++                    case "3": deleteProduct(); break;
++                    case "4": receiveBatch(); break;
++                    case "5": issueStock(); break;
++                    case "6": checkExpiry(); break;
++                    case "7": report(); break;
++                    case "8": save(); break;
++                    case "0": save(); out.println("Tạm biệt!"); return;
++                    default: out.println("Lựa chọn không hợp lệ.");
++                }
++            }
++        } catch (NoSuchElementException e) {      // hết đầu vào (Ctrl+D / Ctrl+Z): lưu rồi thoát
++            out.println();
++            save();
++        }
++    }
++
++    private void printMenu() {
++        out.println();
++        out.println("----------------- MENU -----------------");
++        out.println(" 1. Thêm sản phẩm");
++        out.println(" 2. Tra cứu sản phẩm theo barcode");
++        out.println(" 3. Xóa sản phẩm (chỉ khi không còn lô)");
++        out.println(" 4. Nhập lô hàng");
++        out.println(" 5. Xuất kho (FIFO, bỏ qua lô hết hạn)");
++        out.println(" 6. Cảnh báo lô hết hạn / sắp hết hạn");
++        out.println(" 7. Báo cáo tồn kho");
++        out.println(" 8. Lưu dữ liệu");
++        out.println(" 0. Lưu và thoát");
++    }
++
++    // ------------------------------------------------------------------ các chức năng
++    private void addProduct() {
++        String barcode = ask("Barcode");
++        if (barcode.isEmpty()) { out.println("Barcode không được để trống."); return; }
++        String name = ask("Tên sản phẩm");
++        String unit = ask("Đơn vị tính");
++        Integer min = askInt("Tồn tối thiểu (minStock)");
++        if (min == null) return;
++        boolean ok = inv.getProductBST().insert(new Product(barcode, name, unit, min));
++        out.println(ok ? "Đã thêm sản phẩm " + barcode + "." : "Barcode đã tồn tại, không thêm.");
++    }
++
++    private void lookupProduct() {
++        BSTNode node = inv.getProductBST().search(ask("Barcode"));
++        if (node == null) { out.println("Không tìm thấy sản phẩm."); return; }
++        Product p = node.getProduct();
++        out.println("Sản phẩm: " + p.getBarcode() + " | " + p.getName() + " | đơn vị " + p.getUnit()
++                + " | tồn tối thiểu " + p.getMinStock());
++        List<Batch> batches = node.getBatchQueue().toList();
++        if (batches.isEmpty()) { out.println("  (chưa có lô nào)"); return; }
++        out.println("  Các lô theo thứ tự xuất (đầu hàng đợi trước):");
++        for (Batch b : batches)
++            out.println("  - " + b.getBatchId() + ": SL " + b.getQuantity() + ", nhập " + fmt(b.getImportDate())
++                    + ", HSD " + fmt(b.getExpiryDate()));
++    }
++
++    private void deleteProduct() {
++        String barcode = ask("Barcode cần xóa");
++        BSTNode node = inv.getProductBST().search(barcode);
++        if (node == null) { out.println("Không tìm thấy sản phẩm."); return; }
++        if (inv.getProductBST().delete(barcode)) out.println("Đã xóa sản phẩm " + barcode + ".");
++        else out.println("Không xóa được: sản phẩm còn " + node.getBatchQueue().size() + " lô trong kho.");
++    }
++
++    private void receiveBatch() {
++        String barcode = ask("Barcode sản phẩm");
++        if (inv.getProductBST().search(barcode) == null) { out.println("Sản phẩm chưa có trong danh mục."); return; }
++        String id = ask("Mã lô");
++        LocalDate imp = askDate("Ngày nhập", true);
++        if (imp == null) return;
++        LocalDate exp = askDate("Hạn sử dụng", false);
++        if (exp == null) return;
++        Integer qty = askInt("Số lượng");
++        if (qty == null) return;
++        boolean ok = inv.receiveBatch(barcode, new Batch(id, imp, exp, qty));
++        out.println(ok ? "Đã nhập lô " + id + " vào cuối hàng đợi."
++                : "Nhập thất bại: số lượng phải > 0 và hạn sử dụng phải sau ngày nhập.");
++    }
++
++    private void issueStock() {
++        String barcode = ask("Barcode sản phẩm");
++        if (inv.getProductBST().search(barcode) == null) { out.println("Sản phẩm chưa có trong danh mục."); return; }
++        Integer qty = askInt("Số lượng cần xuất");
++        if (qty == null) return;
++        LocalDate today = askDate("Ngày xuất (Enter = hôm nay)", true);
++        if (today == null) return;
++        List<String> issued = new ArrayList<>(), expired = new ArrayList<>();
++        if (inv.issueStock(barcode, qty, today, issued, expired)) {
++            out.println("Xuất kho thành công. Lấy từ các lô (lô:số lượng): " + issued);
++            if (!expired.isEmpty()) out.println("Lô hết hạn đã bị loại khỏi hàng đợi: " + expired);
++        } else {
++            out.println("Từ chối: số lượng không hợp lệ hoặc tồn còn hạn không đủ. Kho không thay đổi.");
++        }
++    }
++
++    private void checkExpiry() {
++        LocalDate today = askDate("Ngày kiểm tra (Enter = hôm nay)", true);
++        if (today == null) return;
++        Integer k = askInt("Số ngày cảnh báo trước (K)");
++        if (k == null) return;
++        List<String> list = inv.checkExpiry(today, k);
++        if (list.isEmpty()) { out.println("Không có lô nào hết hạn hoặc sắp hết hạn."); return; }
++        out.println("barcode | lô | số lượng | trạng thái");
++        for (String s : list) out.println("  " + s.replace("|", " | "));
++    }
++
++    private void report() {
++        List<String> rows = inv.generateInventoryReport();
++        if (rows.isEmpty()) { out.println("Kho chưa có sản phẩm."); return; }
++        out.println("barcode | tên | đơn vị | tồn tối thiểu | tổng SL | số lô | HSD sớm nhất");
++        for (String r : rows) out.println("  " + r.replace("|", " | "));
++    }
++
++    private void save() {
++        try { store.save(inv); out.println("Đã lưu dữ liệu."); }
++        catch (IOException e) { out.println("Lỗi khi lưu: " + e.getMessage()); }
++    }
++
++    // ------------------------------------------------------------------ nhập liệu
++    private String ask(String label) {
++        out.print(label + ": ");
++        out.flush();
++        return in.nextLine().trim();           // ném NoSuchElementException khi hết đầu vào
++    }
++
++    private Integer askInt(String label) {
++        String s = ask(label);
++        try { return Integer.parseInt(s); }
++        catch (NumberFormatException e) { out.println("Giá trị phải là số nguyên."); return null; }
++    }
++
++    /** Nhận dd/MM/yyyy hoặc yyyy-MM-dd. allowToday: để trống = hôm nay. */
++    private LocalDate askDate(String label, boolean allowToday) {
++        String s = ask(label + " [dd/MM/yyyy]");
++        if (s.isEmpty() && allowToday) return LocalDate.now();
++        try { return s.contains("/") ? LocalDate.parse(s, DMY) : LocalDate.parse(s); }
++        catch (DateTimeParseException e) { out.println("Ngày không hợp lệ."); return null; }
++    }
++
++    private static String fmt(LocalDate d) { return d.format(DMY); }
++}

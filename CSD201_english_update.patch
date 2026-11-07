@@ -1,0 +1,1240 @@
+diff --git a/CODE_NOTES.md b/CODE_NOTES.md
+new file mode 100644
+index 0000000..9af9fec
+--- /dev/null
++++ b/CODE_NOTES.md
+@@ -0,0 +1,35 @@
++# Source code notes (for the defense / oral questions)
++
++## Project structure
++`model` (Product, Batch) | `structure` (BSTNode, BatchQueue, ProductBST) | `service` (Inventory); the menu program is in `app` (`WarehouseApp`, `CsvStore`); tests are in `src/test`, performance measurement in `src/bench`.
++
++## Menu program and CSV storage
++`WarehouseApp` only calls `Inventory` / `ProductBST` and contains no new business logic. `CsvStore` writes products in **pre-order (NLR)** so that reloading rebuilds the tree with exactly the same shape; writing them in ascending barcode order would make the reloaded tree degenerate into a linked list (h = n). Batches are written in their exact FIFO queue order. A batch that `issueStock` already removed because it was expired is no longer in the saved file.
++
++## Big picture
++`Inventory` -> uses `ProductBST` (find a product by barcode) -> each `BSTNode` holds one `Product` + one `BatchQueue` -> the queue holds the `Batch` objects.
++The BST handles **finding a product** (O(h)); the queue handles the **FIFO order of batches** (O(1)). The two concerns are kept separate.
++
++## Points likely to be asked
++1. **Why does `issueStock` have two phases?** Phase 1 is read-only (it sums the quantity of unexpired batches). If there is not enough stock the request is rejected immediately and the queue is not changed.
++   Phase 2 can then be sure there is enough stock, so `peek()` never meets an empty queue. There is no "half-issued" state.
++2. **An expired batch at the front** is only removed (dequeue + recorded in `expiredList`) when an issue is accepted. If the issue is rejected the expired batch stays in the queue so `checkExpiry` can flag it.
++3. **Expiry rule:** a batch is expired only if `expiryDate < currentDate`. Expiry date = currentDate is still valid (boundary tests T3.4b and T4).
++4. **Partial issue of a batch:** `b.setQuantity(b.getQuantity() - remaining)`; the batch stays at the front, no dequeue.
++5. **`deleteNode` for a node with two children:** take the smallest node of the right subtree (`FindMin`), copy its `product` and **`batchQueue`** into the node being deleted, then delete the successor node.
++   Copying `batchQueue` is safe because the precondition of `delete` is that the queue of the deleted node is **empty** (no batch is lost); there is a test "the successor's queue loses no batch".
++6. **Why are `search` / `insert` / `inOrderTraversal` iterative while `delete` is recursive?** Loops use no JVM call stack. The recursive `delete` is easier to read but uses O(h) stack and could still overflow on a very large skewed tree (not tested).
++   `inOrderTraversal` was originally recursive too (so `checkExpiry` could only be measured on random trees); the final version is a loop, see point 9.
++7. **Two things in the code that Table 8 does not list:** `ProductBST.getRoot()` and `Inventory.getProductBST()` (used by tests and the benchmark). The status labels `EXPIRED` / `NEAR_EXPIRY` correspond to "expired" / "near expiry" in the pseudocode.
++8. **Known limitations (stated in section VI.B.4):** the BST is not balanced -> worst case O(n); FIFO by import date does not always match expiry order (FEFO with a priority queue is suggested).
++   `issueStock` also builds `toList()` in O(k) on every call; this cost is clearly visible when k is large (Table 14).
++
++9. **Optimization (direction 1): iterative in-order traversal.** The outer loop runs while `current != null` or the stack is not empty. The inner loop walks down the left branch and pushes nodes onto the stack (a `BSTNode[]` array that starts at 64 and doubles by a copy loop when full);
++   then it pops the top node, appends it to the list (N) and moves to the right child (R). Every node is pushed and popped exactly once, so the time is Θ(n); the stack holds at most h+1 nodes, so the extra space is O(h), on the heap.
++   - *Why change it?* The recursive version overflows the call stack (`StackOverflowError`) at roughly 12,000-16,000 nodes on a skewed tree (h = n); the iterative version works up to 3,000,000 nodes. The benefit is **robustness**, not speed on random trees (measured: no significant change).
++   - *The first version* used a linked-list stack and was about 1.3-1.5x slower on a random tree with n = 100,000 because it allocated one object per node; it was changed to an array.
++   - *Typical questions:* "Why not upgrade to AVL?" -> AVL adds a height field to `BSTNode`, rotations and a new class diagram; high risk, listed under Future Work. "Does the array stack cost extra space?" -> O(h) <= O(n), the same as the call stack of the recursive version but on the heap.
++   - *Tests:* T6a-T6h in `MainTest` (empty tree, one node, 2,000 random nodes compared node by node with the recursive version, an 8-node tree, two calls, right/left skewed trees of 200,000 nodes, `checkExpiry` and the report on a skewed tree of 200,000 nodes).
++
++## How to run
++See `README.txt` (Windows PowerShell and Linux/macOS commands).
+diff --git a/GHI_CHU_CODE.md b/GHI_CHU_CODE.md
+deleted file mode 100644
+index 6dc461d..0000000
+--- a/GHI_CHU_CODE.md
++++ /dev/null
+@@ -1,39 +0,0 @@
+-# Ghi chú đọc hiểu mã nguồn (để bảo vệ / trả lời vấn đáp)
+-
+-## Cấu trúc project
+-`model` (Product, Batch) · `structure` (BSTNode, BatchQueue, ProductBST) · `service` (Inventory); chương trình menu ở `app` (`WarehouseApp`, `CsvStore`); kiểm thử ở `src/test`, đo hiệu năng ở `src/bench`.
+-
+-## Chương trình menu và lưu CSV
+-`WarehouseApp` chỉ gọi lại `Inventory`/`ProductBST` (không chứa logic nghiệp vụ mới). `CsvStore` ghi sản phẩm theo thứ tự **tiền thứ tự (NLR)** để nạp lại cây có đúng hình dạng cũ; ghi theo barcode tăng dần sẽ làm cây nạp lại bị lệch thành danh sách liên kết (h = n). Các lô được ghi đúng thứ tự hàng đợi FIFO. Lô hết hạn đã bị `issueStock` loại khỏi hàng đợi thì không còn trong file lưu.
+-
+-## Bức tranh chung
+-`Inventory` → dùng `ProductBST` (tìm sản phẩm theo barcode) → mỗi `BSTNode` giữ 1 `Product` + 1 `BatchQueue` → hàng đợi chứa các `Batch`.
+-BST lo **tìm sản phẩm** (O(h)); Queue lo **thứ tự FIFO của lô** (O(1)). Hai việc tách rời nhau.
+-
+-## Các điểm dễ bị hỏi
+-1. **Vì sao `issueStock` chia 2 giai đoạn?** Giai đoạn 1 chỉ đọc (cộng tồn của các lô chưa hết hạn). Nếu không đủ thì từ chối ngay, hàng đợi không bị đổi.
+-   Nhờ vậy giai đoạn 2 chắc chắn đủ hàng nên `peek()` không bao giờ gặp hàng đợi rỗng. Không có "xuất dở".
+-2. **Lô hết hạn ở đầu hàng** chỉ bị loại (dequeue + ghi `expiredList`) khi một lần xuất được chấp nhận. Nếu bị từ chối thì lô hết hạn vẫn nằm trong hàng cho `checkExpiry` gắn cờ.
+-3. **Quy ước hết hạn:** `expiryDate < currentDate` mới hết hạn. HSD = currentDate vẫn còn hạn (có test biên T3.4b và T4).
+-4. **Xuất một phần lô:** `b.setQuantity(b.getQuantity() - remaining)`, lô vẫn ở đầu hàng, không dequeue.
+-5. **`deleteNode` khi nút có 2 con:** lấy nút nhỏ nhất của cây con phải (`FindMin`), chép `product` và **`batchQueue`** sang nút cần xóa rồi xóa nút kế nhiệm.
+-   Chép `batchQueue` là an toàn vì tiền điều kiện của `delete` là hàng đợi của nút bị xóa **rỗng** (không mất lô nào) — có test "hàng đợi của nút kế nhiệm không mất lô".
+-6. **Vì sao `search`/`insert`/`inOrderTraversal` cài lặp còn `delete` cài đệ quy?** Lặp không tốn call stack của JVM. `delete` đệ quy cho dễ đọc nhưng tốn stack O(h) và vẫn có nguy cơ tràn stack trên cây lệch rất lớn (chưa kiểm).
+-   `inOrderTraversal` ban đầu cũng đệ quy (nên `checkExpiry` chỉ đo được trên cây ngẫu nhiên); bản cuối đã đổi sang vòng lặp, xem điểm 9.
+-7. **Hai chỗ code có mà Table 8 chưa liệt kê:** `ProductBST.getRoot()` và `Inventory.getProductBST()` (phục vụ kiểm thử/benchmark). Nhãn trạng thái `EXPIRED` / `NEAR_EXPIRY` tương ứng "Đã hết hạn" / "Sắp hết hạn" trong pseudocode.
+-8. **Hạn chế đã biết (đã nêu ở Mục VI.B.4):** BST không cân bằng → worst case O(n); FIFO theo ngày nhập không luôn trùng thứ tự hết hạn (gợi ý FEFO bằng priority queue).
+-   `issueStock` còn tạo `toList()` O(k) mỗi lần gọi — đây là chi phí thấy rõ khi k lớn (Table 14).
+-
+-9. **Tối ưu (Hướng 1): duyệt in-order lặp.** Vòng lặp ngoài chạy khi `current != null` hoặc ngăn xếp còn phần tử. Vòng trong đi hết nhánh trái và đẩy nút vào ngăn xếp (mảng `BSTNode[]` khởi đầu 64, đầy thì nhân đôi bằng vòng sao chép);
+-   sau đó lấy nút ở đỉnh, thêm vào danh sách (N), rồi sang con phải (R). Mỗi nút đẩy và lấy đúng một lần nên Θ(n); ngăn xếp tối đa h+1 phần tử nên không gian phụ O(h), nằm trên heap.
+-   - *Vì sao đổi?* Bản đệ quy tràn call stack (`StackOverflowError`) từ khoảng 12.000–16.000 nút trên cây lệch (h = n); bản lặp chạy đến 3.000.000 nút. Lợi ích là **độ bền**, không phải tốc độ trên cây ngẫu nhiên (số đo: không đổi đáng kể).
+-   - *Phiên bản đầu* dùng ngăn xếp danh sách liên kết, chậm hơn ~1,3–1,5 lần trên cây ngẫu nhiên n = 100.000 do cấp phát một đối tượng cho mỗi nút; đã đổi sang mảng.
+-   - *Câu hỏi hay gặp:* "Tại sao không nâng lên AVL?" → AVL thêm chiều cao vào `BSTNode`, phép quay, đổi class diagram; rủi ro cao, ghi ở Future Work. "Ngăn xếp mảng có tốn thêm không?" → O(h) ≤ O(n), tương đương call stack của bản đệ quy nhưng nằm trên heap.
+-   - *Test:* T6a–T6h trong `MainTest` (cây rỗng, một nút, 2.000 nút ngẫu nhiên đối chiếu từng nút với bản đệ quy, cây 8 nút, gọi hai lần, cây lệch phải/trái 200.000 nút, `checkExpiry` và báo cáo trên cây lệch 200.000 nút).
+-
+-## Cách chạy
+-```
+-sh build.sh                              # hoặc: javac -encoding UTF-8 -d out $(find src -name '*.java')
+-java -cp out warehouse.MainTest          # 57 PASS, 0 FAIL
+-java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv   # 5-8 phút
+-```
+diff --git a/README.txt b/README.txt
+index 8ac064e..bee2207 100644
+--- a/README.txt
++++ b/README.txt
+@@ -1,29 +1,96 @@
+-Group 6 - Warehouse Inventory Management - ma nguon + chuong trinh kiem thu + chuong trinh do
++Group 6 - Warehouse Inventory Management System
++(Binary Search Tree of products + FIFO queue of batches)
+ 
+-Cau truc project:
++======================================================================
++1. PROJECT STRUCTURE
++======================================================================
+   src/main/java/warehouse/model/       Product, Batch
+   src/main/java/warehouse/structure/   BSTNode, BatchQueue, ProductBST
+-  src/main/java/warehouse/service/     Inventory
+-  src/main/java/warehouse/app/         WarehouseApp (chuong trinh menu dong lenh), CsvStore (luu/nap CSV)
+-  src/test/java/warehouse/             MainTest (kiem thu)
+-  src/bench/java/warehouse/            Benchmark (do hieu nang)
+-  data/      products.csv, batches.csv (du lieu mau, chuong trinh tu doc/ghi)
+-  build.sh   bench.csv   GHI_CHU_CODE.md
+-
+-Bien dich:    sh build.sh        (hoac: javac -encoding UTF-8 -d out $(find src -name '*.java'))
+-Chay he thong: java -cp out warehouse.app.WarehouseApp [thu_muc_du_lieu]   (mac dinh ./data; doc va ghi products.csv, batches.csv)
+-              Neu tieng Viet loi tren Windows: chcp 65001 truoc khi chay
+-Kiem thu:     java -cp out warehouse.MainTest     (57 kiem thu: 29 tai hien Trace 1, 2, 3.1-3.4, 4, 5 + 19 kiem thu bien + 8 kiem thu duyet in-order lap + 1 kiem thu checkExpiry voi currentDate null)
+-              Neu tieng Viet bi loi hien thi tren Windows: chcp 65001 truoc, hoac java -Dstdout.encoding=UTF-8 -cp out warehouse.MainTest
+-Do hieu nang: java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv   (mat khoang 5-8 phut; khong chay viec khac trong luc do)
+-
+-Ghi chu:
+-- Co so cua ma nguon la cai dat tham chieu viet theo thiet ke o Table 8 va pseudocode Muc V.A.
+-  Bo sung: kiem tra dau vao null (importDate/expiryDate/currentDate) trong receiveBatch/issueStock/checkExpiry,
+-  19 kiem thu bien (xoa nut la/1 con/goc, so luong am, HSD = currentDate, xuat dung bang ton...).
+-  Toi uu (Muc VII.B): ProductBST.inOrderTraversal doi tu de quy sang duyet lap bang ngan xep mang tu cai dat
+-  (het tran stack tren cay lech lon; khong doi chu ky), kem 8 kiem thu duyet in-order (T6a-T6h trong MainTest).
+-  Viec dung AI de sinh/tham khao ma phai duoc ghi trong AI Audit Log (nop rieng).
+-- bench.csv hien tai do tren may ao Linux 1 loi (Xeon 2.80 GHz, ~4 GB RAM), OpenJDK 21.0.12.1.
+-  Hay chay lai Benchmark tren may cua nhom, roi cap nhat Table 13-14 va Figure 9 neu khac.
+-- Ket qua do tren may ao 1 loi dao dong giua cac lan chay (xem Table 14 va ghi chu o Muc VI.C); hay so sanh xu huong theo n va k.
++  src/main/java/warehouse/service/     Inventory                       (business operations)
++  src/main/java/warehouse/app/         WarehouseApp (console menu), CsvStore (CSV save/load)
++  src/test/java/warehouse/             MainTest   (57 automated checks)
++  src/bench/java/warehouse/            Benchmark  (performance measurement)
++  data/                                products.csv, batches.csv (sample data, read and written by the app)
++  build.sh / build.bat                 compile scripts (Linux-macOS-Git Bash / Windows)
++  bench.csv                            result of the last benchmark run
++  CODE_NOTES.md                        notes for the oral defense
++
++======================================================================
++2. REQUIREMENTS
++======================================================================
++  - JDK 11 or newer (developed and tested with JDK 21). A JRE alone is not enough: you need "javac".
++  - Check:  java -version   and   javac -version   -> BOTH must print the same major version.
++    If "java" is older than "javac" you will get "UnsupportedClassVersionError" (see section 6).
++
++======================================================================
++3. BUILD   (run from the project root, the folder that contains "src")
++======================================================================
++  Windows PowerShell / CMD:
++      .\build.bat
++    or, without the script:
++      Remove-Item -Recurse -Force out -ErrorAction SilentlyContinue
++      javac -encoding UTF-8 -d out (Get-ChildItem -Recurse src -Filter *.java).FullName
++
++  Linux / macOS / Git Bash:
++      sh build.sh
++    or:
++      javac -encoding UTF-8 -d out $(find src -name '*.java')
++
++  No output from javac means success. The compiled classes are in the "out" folder.
++
++======================================================================
++4. RUN
++======================================================================
++  a) The system (console menu):
++         java -cp out warehouse.app.WarehouseApp
++         java -cp out warehouse.app.WarehouseApp path/to/other_data_folder     (optional)
++
++     Menu:  1 add product      2 look up product      3 delete product (only with no batches)
++            4 receive batch    5 issue stock (FIFO)   6 expiry alerts
++            7 inventory report 8 save                 0 save and exit
++     Dates: dd/MM/yyyy (or yyyy-MM-dd). Press Enter to use today's date where it says "Enter = today".
++     Data is loaded from <data folder>/products.csv and batches.csv at start and saved on option 8 / 0.
++     The sample data in "data/" is overwritten by what you save.
++
++  b) Automated tests (expected last line:  "Result: 57 PASS, 0 FAIL"):
++         java -cp out warehouse.MainTest
++
++  c) Benchmark (takes about 5-8 minutes; do not run other programs meanwhile):
++         java -Xms1g -Xmx2g -cp out warehouse.Benchmark > bench.csv
++     PowerShell note: with "> bench.csv" PowerShell may write UTF-16. To get a plain file use:
++         java -Xms1g -Xmx2g -cp out warehouse.Benchmark | Out-File -Encoding ascii bench.csv
++
++======================================================================
++5. CSV FILE FORMAT (data/)
++======================================================================
++  products.csv:  barcode,name,unit,minStock
++  batches.csv :  barcode,batchId,importDate,expiryDate,quantity      (dates as yyyy-MM-dd)
++  Batches of one product must stay in FIFO order (oldest import first). Products are saved in pre-order
++  so that the tree has the same shape after reloading.
++
++======================================================================
++6. TROUBLESHOOTING
++======================================================================
++  - "'sh' is not recognized"            -> you are on Windows: use .\build.bat or the javac command above.
++  - "'javac' is not recognized"         -> install a JDK and add its "bin" folder to PATH; reopen the terminal.
++  - UnsupportedClassVersionError        -> "java" is older than "javac". Put the JDK's bin folder first in PATH, e.g.
++                                           $env:Path = "C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot\bin;" + $env:Path
++                                           (PowerShell, current window only), or call that JDK's java.exe directly:
++                                           & "C:\...\jdk...\bin\java.exe" -cp out warehouse.MainTest
++  - Error: Could not find or load main class .encoding=UTF-8  -> in PowerShell quote the option: java "-Dstdout.encoding=UTF-8" ...
++                                           (not needed: all program output is plain English).
++  - Menu text looks garbled             -> run "chcp 65001" first, or use Windows Terminal.
++  - "Could not find or load main class warehouse.app.WarehouseApp" -> run from the project root and build first;
++                                           the class name needs the package: warehouse.app.WarehouseApp.
++
++======================================================================
++7. NOTES
++======================================================================
++  - The base code is a reference implementation of the design in Table 8 and the pseudocode of section V.A.
++    Additions: null checks (importDate / expiryDate / currentDate) in receiveBatch / issueStock / checkExpiry,
++    19 boundary tests, and an iterative ProductBST.inOrderTraversal with a hand-written array stack
++    (no stack overflow on large skewed trees, same signature), covered by tests T6a-T6h.
++    Any use of AI to generate or consult code must be recorded in the AI Audit Log (submitted separately).
++  - bench.csv was measured on a 1-core Linux virtual machine (Xeon 2.80 GHz, ~4 GB RAM), OpenJDK 21.0.12.1.
++    Re-run the benchmark on the group's machine and update Table 13-14 and Figure 9 if the numbers differ.
++    Measurements on a 1-core VM fluctuate between runs (see Table 14 and section VI.C): compare trends in n and k.
+diff --git a/build.bat b/build.bat
+new file mode 100644
+index 0000000..3f21d24
+--- /dev/null
++++ b/build.bat
+@@ -0,0 +1,9 @@
++@echo off
++rem Compile the whole project into the out\ directory (Windows CMD / PowerShell: .\build.bat).
++if exist out rmdir /s /q out
++dir /s /b src\*.java > sources.txt
++javac -encoding UTF-8 -d out @sources.txt
++set RESULT=%ERRORLEVEL%
++del sources.txt
++if %RESULT% neq 0 (echo Build FAILED) else (echo Build OK - classes are in out\)
++exit /b %RESULT%
+diff --git a/build.sh b/build.sh
+index f523262..070dec9 100644
+--- a/build.sh
++++ b/build.sh
+@@ -1,6 +1,6 @@
+ #!/bin/sh
+-# Biên dịch toàn bộ project vào thư mục out/.
+-# Dùng khi chỉ có JRE (module jdk.compiler); nếu có JDK, thay bằng:
++# Compile the whole project into the out/ directory (Linux / macOS / Git Bash).
++# With a full JDK you can also run:
+ #   javac -encoding UTF-8 -d out $(find src -name '*.java')
+ rm -rf out && mkdir out
+ java -m jdk.compiler/com.sun.tools.javac.Main -encoding UTF-8 -d out $(find src -name '*.java')
+diff --git a/src/bench/java/warehouse/Benchmark.java b/src/bench/java/warehouse/Benchmark.java
+index 7fdc632..e963eba 100644
+--- a/src/bench/java/warehouse/Benchmark.java
++++ b/src/bench/java/warehouse/Benchmark.java
+@@ -15,16 +15,16 @@ import java.util.Locale;
+ import java.util.Random;
+ 
+ /**
+- * Đo hiệu năng thực tế (Mục VI.C). Cách đo: System.nanoTime(); warm-up 5 lần (bỏ qua),
+- * sau đó đo 10 lần và lấy trung bình; mỗi lần đo gồm nhiều lượt thao tác rồi chia lấy thời gian trung bình/1 thao tác.
+- * Kết quả ghi ra stdout dạng CSV: operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us
++ * Measures real running time (report section VI.C). Method: System.nanoTime(); 5 warm-up runs (discarded),
++ * then 10 measured runs averaged; each run executes many operations and divides to get the time per operation.
++ * Output is written to stdout as CSV: operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us
+  */
+ public class Benchmark {
+     static final int WARMUP = 5, REPS = 10;
+-    static volatile long sink;                       // chống JIT loại bỏ code
++    static volatile long sink;                       // prevents the JIT from eliminating code
+     static final LocalDate TODAY = LocalDate.of(2026, 11, 15);
+ 
+-    interface Rep { double run(); }                   // trả về micro-giây / 1 thao tác
++    interface Rep { double run(); }                   // returns microseconds per operation
+ 
+     static void measure(String op, int n, int k, Rep rep) { measure(op, n, k, WARMUP, REPS, rep); }
+ 
+@@ -71,7 +71,7 @@ public class Benchmark {
+         return t;
+     }
+ 
+-    /** Dựng cây lệch (barcode tăng dần) bằng cách nối thẳng nút phải, tránh chi phí O(n^2) khi dựng cây lớn. */
++    /** Builds a skewed tree (ascending barcodes) by linking right children directly, avoiding the O(n^2) cost of building a large skewed tree with insert. */
+     static ProductBST skewedTree(int n) throws Exception {
+         ProductBST t = new ProductBST();
+         BSTNode first = new BSTNode(new Product(key(0), "P0", "pcs", 10)), last = first;
+@@ -106,19 +106,19 @@ public class Benchmark {
+         System.out.println("operation,n,k,warmup,reps,mean_us,stdev_us,median_us,min_us");
+         int[] sizes = {1_000, 10_000, 50_000, 100_000};
+ 
+-        // 1) search, cây ngẫu nhiên
++        // 1) search, random tree
+         for (int n : sizes) {
+             ProductBST t = randomTree(products(n));
+             String[] qs = queryKeys(n, 100_000, 7);
+             measure("search_random", n, 0, () -> searchRep(t, qs));
+         }
+-        // 2) search, cây lệch (barcode tăng dần)
++        // 2) search, skewed tree (ascending barcodes)
+         for (int n : sizes) {
+             ProductBST t = skewedTree(n);
+             String[] qs = queryKeys(n, Math.max(1_000, 100_000_000 / n), 7);
+             measure("search_skewed", n, 0, () -> searchRep(t, qs));
+         }
+-        // 3) insert, cây ngẫu nhiên: dựng cây n phần tử từ rỗng, thời gian trung bình / 1 lần insert
++        // 3) insert, random tree: build an n-element tree from empty; average time per insert
+         for (int n : sizes) {
+             Product[] ps = products(n);
+             int loops = Math.max(1, 200_000 / n);
+@@ -134,7 +134,7 @@ public class Benchmark {
+                 return total / 1000.0 / ((double) loops * n);
+             });
+         }
+-        // 4) insert, barcode tăng dần (cây lệch)
++        // 4) insert, ascending barcodes (skewed tree)
+         for (int n : new int[]{1_000, 5_000, 10_000, 20_000}) {
+             Product[] ps = new Product[n];
+             for (int i = 0; i < n; i++) ps[i] = new Product(key(i), "P" + i, "pcs", 10);
+@@ -147,7 +147,7 @@ public class Benchmark {
+                 return el / 1000.0 / n;
+             });
+         }
+-        // 5) enqueue / dequeue: hàng đợi n lô
++        // 5) enqueue / dequeue: queue of n batches
+         for (int n : new int[]{1_000, 10_000, 100_000, 1_000_000}) {
+             Batch[] bs = new Batch[n];
+             for (int i = 0; i < n; i++) bs[i] = new Batch("B" + i, TODAY, TODAY.plusDays(30), 1);
+@@ -173,7 +173,7 @@ public class Benchmark {
+             measure("enqueue", n, 0, both);
+             measure("dequeue", n, 0, () -> { both.run(); return last[1]; });
+         }
+-        // 6) issueStock xuất 1 đơn vị: phụ thuộc n (k = 10 lô) -> O(h + k)
++        // 6) issueStock issuing 1 unit: depends on n (k = 10 batches) -> O(h + k)
+         for (int n : sizes) {
+             Inventory inv = new Inventory();
+             Product[] ps = products(n);
+@@ -184,7 +184,7 @@ public class Benchmark {
+                 BatchQueue q = t.search(s).batchQueue;
+                 if (q.isEmpty()) for (int j = 0; j < 10; j++) q.enqueue(new Batch("B" + j, TODAY, TODAY.plusDays(30), 1_000_000_000));
+             }
+-            String[] qs = queryKeys(n, 1_000, 11);       // cùng tập khóa với probe
++            String[] qs = queryKeys(n, 1_000, 11);       // same key set as the probe
+             measure("issueStock_1unit", n, 10, () -> {
+                 long t0 = System.nanoTime();
+                 int ok = 0;
+@@ -194,7 +194,7 @@ public class Benchmark {
+                 return el / 1000.0 / (100.0 * qs.length);
+             });
+         }
+-        // 7) issueStock: phụ thuộc k (n = 1000), (a) xuất 1 đơn vị, (b) xuất hết k lô
++        // 7) issueStock: depends on k (n = 1000), (a) issue 1 unit, (b) drain all k batches
+         for (int k : new int[]{10, 100, 1_000, 10_000}) {
+             Inventory inv = new Inventory();
+             for (Product p : products(1_000)) inv.getProductBST().insert(p);
+@@ -205,7 +205,7 @@ public class Benchmark {
+             for (Batch b : bs) q.enqueue(b);
+             int calls = Math.max(100, 2_000_000 / k);
+             measure("issueStock_1unit", 1_000, k, () -> {
+-                // đưa tồn lên đủ lớn để không cạn: dùng lô đầu có số lượng rất lớn
++                // make stock large enough not to run out: the first batch has a very large quantity
+                 q.peek().setQuantity(1_000_000_000);
+                 long t0 = System.nanoTime();
+                 int ok = 0;
+@@ -219,7 +219,7 @@ public class Benchmark {
+                 long total = 0;
+                 for (int i = 0; i < drains; i++) {
+                     while (q.dequeue() != null) { }
+-                    for (Batch b : bs) { b.setQuantity(1); q.enqueue(b); }       // nạp lại (không tính giờ)
++                    for (Batch b : bs) { b.setQuantity(1); q.enqueue(b); }       // refill (not timed)
+                     long t0 = System.nanoTime();
+                     boolean ok = inv.issueStock(target, k, TODAY, null, null);
+                     total += System.nanoTime() - t0;
+@@ -228,7 +228,7 @@ public class Benchmark {
+                 return total / 1000.0 / drains;
+             });
+         }
+-        // 8) checkExpiry và generateInventoryReport: n sản phẩm, mỗi sản phẩm 5 lô (B = 5n)
++        // 8) checkExpiry and generateInventoryReport: n products, 5 batches each (B = 5n)
+         for (int n : sizes) {
+             Inventory inv = new Inventory();
+             Random r = new Random(5);
+diff --git a/src/main/java/warehouse/app/CsvStore.java b/src/main/java/warehouse/app/CsvStore.java
+index 61f120a..f37018c 100644
+--- a/src/main/java/warehouse/app/CsvStore.java
++++ b/src/main/java/warehouse/app/CsvStore.java
+@@ -18,11 +18,11 @@ import java.util.Deque;
+ import java.util.List;
+ 
+ /**
+- * Lưu và nạp kho từ hai file CSV (UTF-8):
++ * Saves and loads the warehouse from two CSV files (UTF-8):
+  *   products.csv: barcode,name,unit,minStock
+- *   batches.csv : barcode,batchId,importDate,expiryDate,quantity   (theo đúng thứ tự hàng đợi FIFO của từng sản phẩm)
+- * Sản phẩm được ghi theo thứ tự tiền thứ tự (NLR) để khi nạp lại cây BST có đúng hình dạng cũ
+- * (ghi theo thứ tự barcode tăng dần sẽ làm cây nạp lại bị lệch thành danh sách liên kết).
++ *   batches.csv : barcode,batchId,importDate,expiryDate,quantity   (in the exact FIFO queue order of each product)
++ * Products are written in pre-order (NLR) so that reloading rebuilds the BST with exactly the same shape
++ * (writing them in ascending barcode order would make the reloaded tree degenerate into a linked list).
+  */
+ public class CsvStore {
+     private static final String PRODUCT_HEADER = "barcode,name,unit,minStock";
+@@ -36,7 +36,7 @@ public class CsvStore {
+         this.batchFile = dir.resolve("batches.csv");
+     }
+ 
+-    /** Nạp dữ liệu vào inventory; trả về danh sách cảnh báo (dòng lỗi bị bỏ qua). File chưa có thì coi như kho rỗng. */
++    /** Loads the data into the inventory and returns a list of warnings (rows that were skipped). A missing file is treated as an empty warehouse. */
+     public List<String> load(Inventory inv) throws IOException {
+         List<String> warnings = new ArrayList<>();
+         if (Files.exists(productFile)) {
+@@ -46,12 +46,12 @@ public class CsvStore {
+                 if (no == 1 || line.trim().isEmpty()) continue;
+                 List<String> f = parse(line);
+                 try {
+-                    if (f.size() != 4) throw new IllegalArgumentException("cần 4 cột");
++                    if (f.size() != 4) throw new IllegalArgumentException("expected 4 columns");
+                     boolean ok = inv.getProductBST().insert(
+                             new Product(f.get(0).trim(), f.get(1), f.get(2), Integer.parseInt(f.get(3).trim())));
+-                    if (!ok) warnings.add(productFile.getFileName() + " dòng " + no + ": trùng barcode, bỏ qua");
++                    if (!ok) warnings.add(productFile.getFileName() + " line " + no + ": duplicate barcode, skipped");
+                 } catch (RuntimeException e) {
+-                    warnings.add(productFile.getFileName() + " dòng " + no + ": " + e.getMessage());
++                    warnings.add(productFile.getFileName() + " line " + no + ": " + e.getMessage());
+                 }
+             }
+         }
+@@ -62,20 +62,20 @@ public class CsvStore {
+                 if (no == 1 || line.trim().isEmpty()) continue;
+                 List<String> f = parse(line);
+                 try {
+-                    if (f.size() != 5) throw new IllegalArgumentException("cần 5 cột");
++                    if (f.size() != 5) throw new IllegalArgumentException("expected 5 columns");
+                     Batch b = new Batch(f.get(1).trim(), LocalDate.parse(f.get(2).trim()),
+                             LocalDate.parse(f.get(3).trim()), Integer.parseInt(f.get(4).trim()));
+                     if (!inv.receiveBatch(f.get(0).trim(), b))
+-                        warnings.add(batchFile.getFileName() + " dòng " + no + ": lô không hợp lệ hoặc sản phẩm chưa có, bỏ qua");
++                        warnings.add(batchFile.getFileName() + " line " + no + ": invalid batch or unknown product, skipped");
+                 } catch (RuntimeException e) {
+-                    warnings.add(batchFile.getFileName() + " dòng " + no + ": " + e.getMessage());
++                    warnings.add(batchFile.getFileName() + " line " + no + ": " + e.getMessage());
+                 }
+             }
+         }
+         return warnings;
+     }
+ 
+-    /** Ghi toàn bộ kho ra hai file CSV (tạo thư mục nếu chưa có). */
++    /** Writes the whole warehouse to the two CSV files (creates the directory if needed). */
+     public void save(Inventory inv) throws IOException {
+         Files.createDirectories(productFile.toAbsolutePath().getParent());
+         List<BSTNode> preorder = preorder(inv);
+@@ -97,7 +97,7 @@ public class CsvStore {
+         }
+     }
+ 
+-    /** Duyệt NLR bằng vòng lặp (không đệ quy, không tràn stack trên cây lệch). */
++    /** Pre-order (NLR) traversal with a loop (no recursion, so no stack overflow on skewed trees). */
+     private static List<BSTNode> preorder(Inventory inv) {
+         List<BSTNode> out = new ArrayList<>();
+         Deque<BSTNode> stack = new ArrayDeque<>();
+@@ -117,7 +117,7 @@ public class CsvStore {
+             String s;
+             while ((s = r.readLine()) != null) lines.add(s);
+         }
+-        if (!lines.isEmpty() && lines.get(0).startsWith("\uFEFF")) lines.set(0, lines.get(0).substring(1)); // BOM của Excel
++        if (!lines.isEmpty() && lines.get(0).startsWith("\uFEFF")) lines.set(0, lines.get(0).substring(1)); // Excel byte-order mark
+         return lines;
+     }
+ 
+@@ -135,7 +135,7 @@ public class CsvStore {
+         return s;
+     }
+ 
+-    /** Tách một dòng CSV, hỗ trợ trường đặt trong dấu nháy kép. */
++    /** Splits one CSV line; supports fields wrapped in double quotes. */
+     static List<String> parse(String line) {
+         List<String> out = new ArrayList<>();
+         StringBuilder cur = new StringBuilder();
+diff --git a/src/main/java/warehouse/app/WarehouseApp.java b/src/main/java/warehouse/app/WarehouseApp.java
+index e7a1d54..19da064 100644
+--- a/src/main/java/warehouse/app/WarehouseApp.java
++++ b/src/main/java/warehouse/app/WarehouseApp.java
+@@ -19,8 +19,9 @@ import java.util.NoSuchElementException;
+ import java.util.Scanner;
+ 
+ /**
+- * Chương trình quản lý kho dạng menu dòng lệnh, gọi các nghiệp vụ của Inventory (Mục V.A).
+- * Chạy: java -cp out warehouse.app.WarehouseApp [thư_mục_dữ_liệu]   (mặc định: ./data)
++ * Command-line menu program for warehouse management. It only calls the business operations of
++ * Inventory (pseudocode V.A) and adds no new business logic.
++ * Run: java -cp out warehouse.app.WarehouseApp [data_directory]   (default: ./data)
+  */
+ public class WarehouseApp {
+     private static final DateTimeFormatter DMY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+@@ -42,20 +43,20 @@ public class WarehouseApp {
+         new WarehouseApp(new Scanner(System.in, StandardCharsets.UTF_8), out, dir).run();
+     }
+ 
+-    // ------------------------------------------------------------------ vòng lặp chính
++    // ------------------------------------------------------------------ main loop
+     public void run() {
+-        out.println("=== HỆ THỐNG QUẢN LÝ KHO (BST + Queue FIFO) ===");
++        out.println("=== WAREHOUSE INVENTORY MANAGEMENT (BST + FIFO Queue) ===");
+         try {
+             List<String> warnings = store.load(inv);
+-            for (String w : warnings) out.println("Cảnh báo khi nạp dữ liệu: " + w);
+-            out.println("Đã nạp " + inv.getProductBST().inOrderTraversal().size() + " sản phẩm.");
++            for (String w : warnings) out.println("Warning while loading data: " + w);
++            out.println("Loaded " + inv.getProductBST().inOrderTraversal().size() + " product(s).");
+         } catch (IOException e) {
+-            out.println("Không đọc được dữ liệu: " + e.getMessage() + " (bắt đầu với kho rỗng)");
++            out.println("Could not read data: " + e.getMessage() + " (starting with an empty warehouse)");
+         }
+         try {
+             while (true) {
+                 printMenu();
+-                String choice = ask("Chọn chức năng");
++                String choice = ask("Choose an option");
+                 switch (choice) {
+                     case "1": addProduct(); break;
+                     case "2": lookupProduct(); break;
+@@ -65,11 +66,11 @@ public class WarehouseApp {
+                     case "6": checkExpiry(); break;
+                     case "7": report(); break;
+                     case "8": save(); break;
+-                    case "0": save(); out.println("Tạm biệt!"); return;
+-                    default: out.println("Lựa chọn không hợp lệ.");
++                    case "0": save(); out.println("Goodbye!"); return;
++                    default: out.println("Invalid option.");
+                 }
+             }
+-        } catch (NoSuchElementException e) {      // hết đầu vào (Ctrl+D / Ctrl+Z): lưu rồi thoát
++        } catch (NoSuchElementException e) {      // input ended (Ctrl+D / Ctrl+Z): save and exit
+             out.println();
+             save();
+         }
+@@ -78,124 +79,124 @@ public class WarehouseApp {
+     private void printMenu() {
+         out.println();
+         out.println("----------------- MENU -----------------");
+-        out.println(" 1. Thêm sản phẩm");
+-        out.println(" 2. Tra cứu sản phẩm theo barcode");
+-        out.println(" 3. Xóa sản phẩm (chỉ khi không còn lô)");
+-        out.println(" 4. Nhập lô hàng");
+-        out.println(" 5. Xuất kho (FIFO, bỏ qua lô hết hạn)");
+-        out.println(" 6. Cảnh báo lô hết hạn / sắp hết hạn");
+-        out.println(" 7. Báo cáo tồn kho");
+-        out.println(" 8. Lưu dữ liệu");
+-        out.println(" 0. Lưu và thoát");
++        out.println(" 1. Add a product");
++        out.println(" 2. Look up a product by barcode");
++        out.println(" 3. Delete a product (only when it has no batches)");
++        out.println(" 4. Receive a batch");
++        out.println(" 5. Issue stock (FIFO, expired batches are skipped)");
++        out.println(" 6. Expiry alerts (expired / near expiry)");
++        out.println(" 7. Inventory report");
++        out.println(" 8. Save data");
++        out.println(" 0. Save and exit");
+     }
+ 
+-    // ------------------------------------------------------------------ các chức năng
++    // ------------------------------------------------------------------ features
+     private void addProduct() {
+         String barcode = ask("Barcode");
+-        if (barcode.isEmpty()) { out.println("Barcode không được để trống."); return; }
+-        String name = ask("Tên sản phẩm");
+-        String unit = ask("Đơn vị tính");
+-        Integer min = askInt("Tồn tối thiểu (minStock)");
++        if (barcode.isEmpty()) { out.println("Barcode must not be empty."); return; }
++        String name = ask("Product name");
++        String unit = ask("Unit");
++        Integer min = askInt("Minimum stock (minStock)");
+         if (min == null) return;
+         boolean ok = inv.getProductBST().insert(new Product(barcode, name, unit, min));
+-        out.println(ok ? "Đã thêm sản phẩm " + barcode + "." : "Barcode đã tồn tại, không thêm.");
++        out.println(ok ? "Product " + barcode + " added." : "Barcode already exists, nothing added.");
+     }
+ 
+     private void lookupProduct() {
+         BSTNode node = inv.getProductBST().search(ask("Barcode"));
+-        if (node == null) { out.println("Không tìm thấy sản phẩm."); return; }
++        if (node == null) { out.println("Product not found."); return; }
+         Product p = node.getProduct();
+-        out.println("Sản phẩm: " + p.getBarcode() + " | " + p.getName() + " | đơn vị " + p.getUnit()
+-                + " | tồn tối thiểu " + p.getMinStock());
++        out.println("Product: " + p.getBarcode() + " | " + p.getName() + " | unit " + p.getUnit()
++                + " | minimum stock " + p.getMinStock());
+         List<Batch> batches = node.getBatchQueue().toList();
+-        if (batches.isEmpty()) { out.println("  (chưa có lô nào)"); return; }
+-        out.println("  Các lô theo thứ tự xuất (đầu hàng đợi trước):");
++        if (batches.isEmpty()) { out.println("  (no batches yet)"); return; }
++        out.println("  Batches in issue order (front of the queue first):");
+         for (Batch b : batches)
+-            out.println("  - " + b.getBatchId() + ": SL " + b.getQuantity() + ", nhập " + fmt(b.getImportDate())
+-                    + ", HSD " + fmt(b.getExpiryDate()));
++            out.println("  - " + b.getBatchId() + ": qty " + b.getQuantity() + ", received " + fmt(b.getImportDate())
++                    + ", expires " + fmt(b.getExpiryDate()));
+     }
+ 
+     private void deleteProduct() {
+-        String barcode = ask("Barcode cần xóa");
++        String barcode = ask("Barcode to delete");
+         BSTNode node = inv.getProductBST().search(barcode);
+-        if (node == null) { out.println("Không tìm thấy sản phẩm."); return; }
+-        if (inv.getProductBST().delete(barcode)) out.println("Đã xóa sản phẩm " + barcode + ".");
+-        else out.println("Không xóa được: sản phẩm còn " + node.getBatchQueue().size() + " lô trong kho.");
++        if (node == null) { out.println("Product not found."); return; }
++        if (inv.getProductBST().delete(barcode)) out.println("Product " + barcode + " deleted.");
++        else out.println("Cannot delete: the product still has " + node.getBatchQueue().size() + " batch(es) in stock.");
+     }
+ 
+     private void receiveBatch() {
+-        String barcode = ask("Barcode sản phẩm");
+-        if (inv.getProductBST().search(barcode) == null) { out.println("Sản phẩm chưa có trong danh mục."); return; }
+-        String id = ask("Mã lô");
+-        LocalDate imp = askDate("Ngày nhập", true);
++        String barcode = ask("Product barcode");
++        if (inv.getProductBST().search(barcode) == null) { out.println("The product is not in the catalog."); return; }
++        String id = ask("Batch ID");
++        LocalDate imp = askDate("Import date", true);
+         if (imp == null) return;
+-        LocalDate exp = askDate("Hạn sử dụng", false);
++        LocalDate exp = askDate("Expiry date", false);
+         if (exp == null) return;
+-        Integer qty = askInt("Số lượng");
++        Integer qty = askInt("Quantity");
+         if (qty == null) return;
+         boolean ok = inv.receiveBatch(barcode, new Batch(id, imp, exp, qty));
+-        out.println(ok ? "Đã nhập lô " + id + " vào cuối hàng đợi."
+-                : "Nhập thất bại: số lượng phải > 0 và hạn sử dụng phải sau ngày nhập.");
++        out.println(ok ? "Batch " + id + " added to the rear of the queue."
++                : "Receiving failed: quantity must be > 0 and the expiry date must be after the import date.");
+     }
+ 
+     private void issueStock() {
+-        String barcode = ask("Barcode sản phẩm");
+-        if (inv.getProductBST().search(barcode) == null) { out.println("Sản phẩm chưa có trong danh mục."); return; }
+-        Integer qty = askInt("Số lượng cần xuất");
++        String barcode = ask("Product barcode");
++        if (inv.getProductBST().search(barcode) == null) { out.println("The product is not in the catalog."); return; }
++        Integer qty = askInt("Quantity to issue");
+         if (qty == null) return;
+-        LocalDate today = askDate("Ngày xuất (Enter = hôm nay)", true);
++        LocalDate today = askDate("Issue date (Enter = today)", true);
+         if (today == null) return;
+         List<String> issued = new ArrayList<>(), expired = new ArrayList<>();
+         if (inv.issueStock(barcode, qty, today, issued, expired)) {
+-            out.println("Xuất kho thành công. Lấy từ các lô (lô:số lượng): " + issued);
+-            if (!expired.isEmpty()) out.println("Lô hết hạn đã bị loại khỏi hàng đợi: " + expired);
++            out.println("Stock issued. Taken from batches (batch:quantity): " + issued);
++            if (!expired.isEmpty()) out.println("Expired batches removed from the queue: " + expired);
+         } else {
+-            out.println("Từ chối: số lượng không hợp lệ hoặc tồn còn hạn không đủ. Kho không thay đổi.");
++            out.println("Rejected: invalid quantity or not enough unexpired stock. The warehouse is unchanged.");
+         }
+     }
+ 
+     private void checkExpiry() {
+-        LocalDate today = askDate("Ngày kiểm tra (Enter = hôm nay)", true);
++        LocalDate today = askDate("Check date (Enter = today)", true);
+         if (today == null) return;
+-        Integer k = askInt("Số ngày cảnh báo trước (K)");
++        Integer k = askInt("Warning window in days (K)");
+         if (k == null) return;
+         List<String> list = inv.checkExpiry(today, k);
+-        if (list.isEmpty()) { out.println("Không có lô nào hết hạn hoặc sắp hết hạn."); return; }
+-        out.println("barcode | lô | số lượng | trạng thái");
++        if (list.isEmpty()) { out.println("No batch is expired or near expiry."); return; }
++        out.println("barcode | batch | quantity | status");
+         for (String s : list) out.println("  " + s.replace("|", " | "));
+     }
+ 
+     private void report() {
+         List<String> rows = inv.generateInventoryReport();
+-        if (rows.isEmpty()) { out.println("Kho chưa có sản phẩm."); return; }
+-        out.println("barcode | tên | đơn vị | tồn tối thiểu | tổng SL | số lô | HSD sớm nhất");
++        if (rows.isEmpty()) { out.println("The warehouse has no products."); return; }
++        out.println("barcode | name | unit | min stock | total qty | batches | earliest expiry");
+         for (String r : rows) out.println("  " + r.replace("|", " | "));
+     }
+ 
+     private void save() {
+-        try { store.save(inv); out.println("Đã lưu dữ liệu."); }
+-        catch (IOException e) { out.println("Lỗi khi lưu: " + e.getMessage()); }
++        try { store.save(inv); out.println("Data saved."); }
++        catch (IOException e) { out.println("Error while saving: " + e.getMessage()); }
+     }
+ 
+-    // ------------------------------------------------------------------ nhập liệu
++    // ------------------------------------------------------------------ input helpers
+     private String ask(String label) {
+         out.print(label + ": ");
+         out.flush();
+-        return in.nextLine().trim();           // ném NoSuchElementException khi hết đầu vào
++        return in.nextLine().trim();           // throws NoSuchElementException when input ends
+     }
+ 
+     private Integer askInt(String label) {
+         String s = ask(label);
+         try { return Integer.parseInt(s); }
+-        catch (NumberFormatException e) { out.println("Giá trị phải là số nguyên."); return null; }
++        catch (NumberFormatException e) { out.println("The value must be an integer."); return null; }
+     }
+ 
+-    /** Nhận dd/MM/yyyy hoặc yyyy-MM-dd. allowToday: để trống = hôm nay. */
++    /** Accepts dd/MM/yyyy or yyyy-MM-dd. allowToday: an empty answer means today. */
+     private LocalDate askDate(String label, boolean allowToday) {
+         String s = ask(label + " [dd/MM/yyyy]");
+         if (s.isEmpty() && allowToday) return LocalDate.now();
+         try { return s.contains("/") ? LocalDate.parse(s, DMY) : LocalDate.parse(s); }
+-        catch (DateTimeParseException e) { out.println("Ngày không hợp lệ."); return null; }
++        catch (DateTimeParseException e) { out.println("Invalid date."); return null; }
+     }
+ 
+     private static String fmt(LocalDate d) { return d.format(DMY); }
+diff --git a/src/main/java/warehouse/model/Batch.java b/src/main/java/warehouse/model/Batch.java
+index ecabc40..375dd9f 100644
+--- a/src/main/java/warehouse/model/Batch.java
++++ b/src/main/java/warehouse/model/Batch.java
+@@ -2,7 +2,7 @@ package warehouse.model;
+ 
+ import java.time.LocalDate;
+ 
+-/** Một lô hàng của một sản phẩm (Table 8). */
++/** A batch (lot) of one product (Table 8). */
+ public class Batch {
+     private final String batchId;
+     private final LocalDate importDate;
+diff --git a/src/main/java/warehouse/model/Product.java b/src/main/java/warehouse/model/Product.java
+index 0de1ecb..9698d6c 100644
+--- a/src/main/java/warehouse/model/Product.java
++++ b/src/main/java/warehouse/model/Product.java
+@@ -1,6 +1,6 @@
+ package warehouse.model;
+ 
+-/** Thông tin định danh của sản phẩm (Table 8). */
++/** Identity information of a product (Table 8). */
+ public class Product {
+     private final String barcode;
+     private String name;
+diff --git a/src/main/java/warehouse/service/Inventory.java b/src/main/java/warehouse/service/Inventory.java
+index 18bdfa4..ce99359 100644
+--- a/src/main/java/warehouse/service/Inventory.java
++++ b/src/main/java/warehouse/service/Inventory.java
+@@ -10,13 +10,13 @@ import java.time.temporal.ChronoUnit;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+-/** Điều phối nghiệp vụ (Mục V.A 2.2, 3.2, 4.1, 5.1). Quy ước hết hạn: expiryDate < currentDate. */
++/** Business-logic coordinator (pseudocode V.A 2.2, 3.2, 4.1, 5.1). Expiry rule: a batch is expired only if expiryDate < currentDate. */
+ public class Inventory {
+     private final ProductBST productBST = new ProductBST();
+ 
+     public ProductBST getProductBST() { return productBST; }
+ 
+-    /** Mục 2.2 - O(h). */
++    /** Pseudocode 2.2 - O(h). */
+     public boolean receiveBatch(String barcode, Batch batch) {
+         if (barcode == null || barcode.isEmpty() || batch == null) return false;
+         if (batch.getImportDate() == null || batch.getExpiryDate() == null) return false;
+@@ -29,8 +29,8 @@ public class Inventory {
+     }
+ 
+     /**
+-     * Mục 3.2 - O(h + k). Kết quả chi tiết trả qua issuedList ("batchId:số lượng")
+-     * và expiredList (lô hết hạn đã bị loại). Từ chối thì hàng đợi giữ nguyên.
++     * Pseudocode 3.2 - O(h + k). Details are returned through issuedList ("batchId:quantity")
++     * and expiredList (expired batches that were discarded). If the request is rejected the queue is left unchanged.
+      */
+     public boolean issueStock(String barcode, int quantity, LocalDate currentDate,
+                               List<String> issuedList, List<String> expiredList) {
+@@ -39,14 +39,14 @@ public class Inventory {
+         if (node == null) return false;
+         BatchQueue queue = node.getBatchQueue();
+ 
+-        // Giai đoạn kiểm tra (chỉ đọc)
++        // Check phase (read-only)
+         long available = 0;
+         for (Batch b : queue.toList()) {
+             if (!b.getExpiryDate().isBefore(currentDate)) available += b.getQuantity();
+         }
+         if (available < quantity) return false;
+ 
+-        // Giai đoạn xuất
++        // Issue phase
+         int remaining = quantity;
+         while (remaining > 0) {
+             Batch b = queue.peek();
+@@ -68,7 +68,7 @@ public class Inventory {
+         return true;
+     }
+ 
+-    /** Mục 4.1 - Θ(n + B). Mỗi phần tử: "barcode|batchId|quantity|trạng thái". currentDate null thì trả về danh sách rỗng. */
++    /** Pseudocode 4.1 - Θ(n + B). Each element: "barcode|batchId|quantity|status". Returns an empty list if currentDate is null. */
+     public List<String> checkExpiry(LocalDate currentDate, int K) {
+         List<String> expiryList = new ArrayList<>();
+         if (currentDate == null) return expiryList;
+@@ -85,7 +85,7 @@ public class Inventory {
+         return expiryList;
+     }
+ 
+-    /** Mục 5.1 - Θ(n + B). Mỗi dòng: "barcode|name|unit|minStock|tổng SL|số lô|HSD sớm nhất". */
++    /** Pseudocode 5.1 - Θ(n + B). Each line: "barcode|name|unit|minStock|total quantity|batch count|earliest expiry date". */
+     public List<String> generateInventoryReport() {
+         List<String> report = new ArrayList<>();
+         for (BSTNode node : productBST.inOrderTraversal()) {
+diff --git a/src/main/java/warehouse/structure/BSTNode.java b/src/main/java/warehouse/structure/BSTNode.java
+index 420810c..5950431 100644
+--- a/src/main/java/warehouse/structure/BSTNode.java
++++ b/src/main/java/warehouse/structure/BSTNode.java
+@@ -2,7 +2,7 @@ package warehouse.structure;
+ 
+ import warehouse.model.Product;
+ 
+-/** Nút của cây tìm kiếm: một Product và BatchQueue của sản phẩm đó (Table 8). */
++/** BST node: one Product and that product's BatchQueue (Table 8). */
+ public class BSTNode {
+     public Product product;
+     public BatchQueue batchQueue;
+diff --git a/src/main/java/warehouse/structure/BatchQueue.java b/src/main/java/warehouse/structure/BatchQueue.java
+index 4c10f46..4f668b5 100644
+--- a/src/main/java/warehouse/structure/BatchQueue.java
++++ b/src/main/java/warehouse/structure/BatchQueue.java
+@@ -5,7 +5,7 @@ import warehouse.model.Batch;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+-/** Hàng đợi FIFO các lô, cài đặt bằng danh sách liên kết đơn front/rear (không dùng java.util.Queue). */
++/** FIFO queue of batches, implemented as a singly linked list with front/rear pointers (java.util.Queue is not used). */
+ public class BatchQueue {
+     private static class Node {
+         Batch batch;
+@@ -17,7 +17,7 @@ public class BatchQueue {
+     private Node rear;
+     private int size;
+ 
+-    /** O(1): thêm vào cuối hàng đợi. */
++    /** O(1): append to the rear of the queue. */
+     public void enqueue(Batch batch) {
+         Node node = new Node(batch);
+         if (isEmpty()) {
+@@ -30,7 +30,7 @@ public class BatchQueue {
+         size++;
+     }
+ 
+-    /** O(1): lấy và xóa lô ở đầu; trả về null nếu rỗng. */
++    /** O(1): remove and return the front batch; returns null if the queue is empty. */
+     public Batch dequeue() {
+         if (isEmpty()) return null;
+         Batch b = front.batch;
+@@ -40,14 +40,14 @@ public class BatchQueue {
+         return b;
+     }
+ 
+-    /** O(1): xem lô ở đầu; trả về null nếu rỗng. */
++    /** O(1): return the front batch without removing it; returns null if the queue is empty. */
+     public Batch peek() { return isEmpty() ? null : front.batch; }
+ 
+     public boolean isEmpty() { return size == 0; }
+ 
+     public int size() { return size; }
+ 
+-    /** O(k): danh sách các lô theo thứ tự hàng đợi, không làm thay đổi hàng đợi. */
++    /** O(k): batches in queue order; the queue is not modified. */
+     public List<Batch> toList() {
+         List<Batch> list = new ArrayList<>(size);
+         for (Node p = front; p != null; p = p.next) list.add(p.batch);
+diff --git a/src/main/java/warehouse/structure/ProductBST.java b/src/main/java/warehouse/structure/ProductBST.java
+index 6b69a21..ed7e972 100644
+--- a/src/main/java/warehouse/structure/ProductBST.java
++++ b/src/main/java/warehouse/structure/ProductBST.java
+@@ -5,13 +5,13 @@ import warehouse.model.Product;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+-/** Cây nhị phân tìm kiếm (không tự cân bằng) theo barcode (Mục V.A 1.1 - 1.4). */
++/** Binary search tree (not self-balancing) keyed by barcode (pseudocode V.A 1.1 - 1.4). */
+ public class ProductBST {
+     private BSTNode root;
+ 
+     public BSTNode getRoot() { return root; }
+ 
+-    /** Mục 1.2 - O(h), cài đặt lặp. */
++    /** Pseudocode 1.2 - O(h), iterative implementation. */
+     public BSTNode search(String barcode) {
+         BSTNode current = root;
+         while (current != null) {
+@@ -22,7 +22,7 @@ public class ProductBST {
+         return null;
+     }
+ 
+-    /** Mục 1.1 - O(h); trả về false nếu trùng barcode. */
++    /** Pseudocode 1.1 - O(h); returns false if the barcode already exists. */
+     public boolean insert(Product product) {
+         if (root == null) {
+             root = new BSTNode(product);
+@@ -42,8 +42,8 @@ public class ProductBST {
+     }
+ 
+     /**
+-     * Mục 1.3 - O(h). Tiền điều kiện: sản phẩm tồn tại và BatchQueue của nó rỗng;
+-     * nếu không thì từ chối (trả về false) và cây không đổi.
++     * Pseudocode 1.3 - O(h). Precondition: the product exists and its BatchQueue is empty;
++     * otherwise the request is rejected (returns false) and the tree is unchanged.
+      */
+     public boolean delete(String barcode) {
+         BSTNode node = search(barcode);
+@@ -65,26 +65,26 @@ public class ProductBST {
+             BSTNode min = node.right;
+             while (min.left != null) min = min.left;      // FindMin
+             node.product = min.product;
+-            node.batchQueue = min.batchQueue;               // sao chép tham chiếu
++            node.batchQueue = min.batchQueue;               // copy the reference
+             node.right = deleteNode(node.right, min.product.getBarcode());
+         }
+         return node;
+     }
+ 
+     /**
+-     * Mục 1.4 - Θ(n): danh sách nút theo barcode tăng dần (LNR).
+-     * Duyệt bằng vòng lặp với ngăn xếp mảng tự cài đặt (tự giãn gấp đôi khi đầy)
+-     * thay cho đệ quy, nên không còn tràn call stack của JVM trên cây lệch lớn. Ngăn xếp nằm trên heap,
+-     * không cấp phát đối tượng cho từng nút; kết quả giống hệt bản đệ quy. Không gian phụ O(h).
++     * Pseudocode 1.4 - Θ(n): nodes in ascending barcode order (LNR).
++     * Traversal uses a loop with a hand-written array stack (doubles its capacity when full)
++     * instead of recursion, so the JVM call stack can no longer overflow on large skewed trees. The stack lives on the heap,
++     * allocates no object per node, and yields exactly the same result as the recursive version. Extra space O(h).
+      */
+     public List<BSTNode> inOrderTraversal() {
+         List<BSTNode> list = new ArrayList<>();
+-        BSTNode[] stack = new BSTNode[64];     // ngăn xếp: các nút đã đi qua nhưng chưa thăm
+-        int top = 0;                           // số phần tử hiện có trong ngăn xếp
++        BSTNode[] stack = new BSTNode[64];     // stack: nodes passed on the way down but not yet visited
++        int top = 0;                           // number of elements currently in the stack
+         BSTNode current = root;
+         while (current != null || top > 0) {
+-            while (current != null) {          // đi hết nhánh trái, đẩy từng nút vào ngăn xếp
+-                if (top == stack.length) {     // đầy: giãn gấp đôi (sao chép thủ công), chi phí chia đều O(1)
++            while (current != null) {          // walk down the left branch, pushing each node
++                if (top == stack.length) {     // full: double the capacity (manual copy), amortized O(1)
+                     BSTNode[] bigger = new BSTNode[top * 2];
+                     for (int i = 0; i < top; i++) bigger[i] = stack[i];
+                     stack = bigger;
+@@ -92,10 +92,10 @@ public class ProductBST {
+                 stack[top++] = current;
+                 current = current.left;
+             }
+-            BSTNode node = stack[--top];       // lấy nút ở đỉnh ngăn xếp
+-            stack[top] = null;                 // không giữ tham chiếu thừa
+-            list.add(node);                    // thăm nút (N)
+-            current = node.right;              // chuyển sang cây con phải (R)
++            BSTNode node = stack[--top];       // pop the node on top of the stack
++            stack[top] = null;                 // do not keep a stale reference
++            list.add(node);                    // visit the node (N)
++            current = node.right;              // move to the right subtree (R)
+         }
+         return list;
+     }
+diff --git a/src/test/java/warehouse/MainTest.java b/src/test/java/warehouse/MainTest.java
+index adcfcfa..4f551bd 100644
+--- a/src/test/java/warehouse/MainTest.java
++++ b/src/test/java/warehouse/MainTest.java
+@@ -11,7 +11,7 @@ import java.time.LocalDate;
+ import java.util.ArrayList;
+ import java.util.List;
+ 
+-/** Kiểm thử tái hiện các Trace của Mục V.B (ngày dd/MM năm 2026). */
++/** Tests that reproduce the traces of report section V.B (dates are dd/MM in 2026). */
+ public class MainTest {
+     static int pass = 0, fail = 0;
+ 
+@@ -32,17 +32,17 @@ public class MainTest {
+     }
+ 
+ 
+-    // ---- Hỗ trợ kiểm thử duyệt in-order lặp (Mục VII.B) ----
+-    static void refInOrder(BSTNode n, List<BSTNode> out) {      // bản đệ quy tham chiếu để đối chiếu
++    // ---- Helpers for testing the iterative in-order traversal (section VII.B) ----
++    static void refInOrder(BSTNode n, List<BSTNode> out) {      // reference recursive version used for comparison
+         if (n == null) return;
+         refInOrder(n.left, out); out.add(n); refInOrder(n.right, out);
+     }
+ 
+-    static String code(int i) {                                   // barcode 8 chữ số, so sánh chuỗi = so sánh số
++    static String code(int i) {                                   // 8-digit barcode: string comparison equals numeric comparison
+         return String.format("%08d", i);
+     }
+ 
+-    /** Dựng cây lệch n nút bằng cách nối thẳng (tránh chi phí O(n^2) của insert); right = true: lệch phải. */
++    /** Builds a skewed tree of n nodes by linking directly (avoids the O(n^2) cost of insert); right = true: right-skewed. */
+     static ProductBST skewed(int n, boolean right) throws Exception {
+         return skewedInto(new ProductBST(), n, right);
+     }
+@@ -71,77 +71,77 @@ public class MainTest {
+         ProductBST t = new ProductBST();
+         check("T1 insert BC-04/02/06/05", t.insert(new Product("BC-04", "a", "u", 0)) && t.insert(new Product("BC-02", "b", "u", 0))
+                 && t.insert(new Product("BC-06", "c", "u", 0)) && t.insert(new Product("BC-05", "d", "u", 0)));
+-        check("T1 insert trùng barcode bị từ chối", !t.insert(new Product("BC-05", "x", "u", 0)));
++        check("T1 insert with a duplicate barcode is rejected", !t.insert(new Product("BC-05", "x", "u", 0)));
+         check("T1 search BC-05 / BC-09", t.search("BC-05") != null && t.search("BC-09") == null);
+         check("T1 delete BC-04 (2 con) -> root = BC-05", t.delete("BC-04") && t.getRoot().product.getBarcode().equals("BC-05")
+                 && t.getRoot().left.product.getBarcode().equals("BC-02") && t.getRoot().right.product.getBarcode().equals("BC-06")
+                 && t.getRoot().right.left == null);
+-        check("T1 inOrder tăng dần", t.inOrderTraversal().size() == 3
++        check("T1 in-order is ascending", t.inOrderTraversal().size() == 3
+                 && t.inOrderTraversal().get(0).product.getBarcode().equals("BC-02"));
+-        // Tiền điều kiện Delete (xử lý điểm 5)
++        // Delete precondition (handles point 5)
+         t.search("BC-06").batchQueue.enqueue(new Batch("X", d(1, 9), d(1, 10), 5));
+-        check("Delete bị từ chối khi hàng đợi còn lô; cây không đổi", !t.delete("BC-06") && t.search("BC-06") != null);
+-        check("Delete barcode không tồn tại trả về false", !t.delete("BC-99"));
++        check("Delete rejected while the queue still holds batches; tree unchanged", !t.delete("BC-06") && t.search("BC-06") != null);
++        check("Delete of a non-existent barcode returns false", !t.delete("BC-99"));
+ 
+         // Trace 2 / 2.1 / 2.2 - BatchQueue
+         BatchQueue q = new BatchQueue();
+-        check("T2.2 queue rỗng: peek/dequeue = null, isEmpty = TRUE, size = 0",
++        check("T2.2 empty queue: peek/dequeue = null, isEmpty = TRUE, size = 0",
+                 q.peek() == null && q.dequeue() == null && q.isEmpty() && q.size() == 0);
+         q.enqueue(new Batch("B01", d(1, 9), d(1, 10), 1));
+         q.enqueue(new Batch("B02", d(2, 9), d(2, 10), 1));
+         q.enqueue(new Batch("B03", d(3, 9), d(3, 10), 1));
+-        check("T2 enqueue B01,B02,B03 -> size 3, toList theo thứ tự", q.size() == 3 && q.toList().get(0).getBatchId().equals("B01")
++        check("T2 enqueue B01,B02,B03 -> size 3, toList in order", q.size() == 3 && q.toList().get(0).getBatchId().equals("B01")
+                 && q.toList().get(2).getBatchId().equals("B03") && q.size() == 3);
+         check("T2.1 dequeue theo FIFO B01,B02,B03", q.dequeue().getBatchId().equals("B01") && q.dequeue().getBatchId().equals("B02")
+                 && q.dequeue().getBatchId().equals("B03") && q.isEmpty());
+ 
+         // Trace 3.1 - ReceiveBatch
+         Inventory inv = milkInventory();
+-        check("T3.1 receiveBatch B04 hợp lệ", inv.receiveBatch("8930001", new Batch("B04", d(14, 9), d(14, 10), 80))
++        check("T3.1 receiveBatch B04 is valid", inv.receiveBatch("8930001", new Batch("B04", d(14, 9), d(14, 10), 80))
+                 && inv.getProductBST().search("8930001").batchQueue.size() == 4);
+-        check("T3.1 B05 quantity = 0 bị từ chối", !inv.receiveBatch("8930001", new Batch("B05", d(14, 9), d(14, 10), 0)));
+-        check("T3.1 barcode không tồn tại bị từ chối", !inv.receiveBatch("8930999", new Batch("B06", d(14, 9), d(14, 10), 10)));
+-        check("T3.1 HSD <= ngày nhập bị từ chối", !inv.receiveBatch("8930001", new Batch("B07", d(14, 9), d(14, 9), 10)));
+-        check("T3.1 hàng đợi vẫn 4 lô", inv.getProductBST().search("8930001").batchQueue.size() == 4);
++        check("T3.1 B05 with quantity = 0 is rejected", !inv.receiveBatch("8930001", new Batch("B05", d(14, 9), d(14, 10), 0)));
++        check("T3.1 unknown barcode is rejected", !inv.receiveBatch("8930999", new Batch("B06", d(14, 9), d(14, 10), 10)));
++        check("T3.1 expiry date <= import date is rejected", !inv.receiveBatch("8930001", new Batch("B07", d(14, 9), d(14, 9), 10)));
++        check("T3.1 queue still holds 4 batches", inv.getProductBST().search("8930001").batchQueue.size() == 4);
+ 
+-        // Trace 3.2 - xuất qua nhiều lô
++        // Trace 3.2 - issuing across several batches
+         List<String> issued = new ArrayList<>(), expired = new ArrayList<>();
+-        check("T3.2 issueStock 70 tại 30/09", inv.issueStock("8930001", 70, d(30, 9), issued, expired));
++        check("T3.2 issueStock 70 on 30/09", inv.issueStock("8930001", 70, d(30, 9), issued, expired));
+         check("T3.2 issuedList = [B01:50, B02:20]", issued.toString().equals("[B01:50, B02:20]") && expired.isEmpty());
+         BatchQueue mq = inv.getProductBST().search("8930001").batchQueue;
+-        check("T3.2 trạng thái: B02(40) B03(40) B04(80)", mq.size() == 3 && mq.peek().getBatchId().equals("B02") && mq.peek().getQuantity() == 40);
++        check("T3.2 state: B02(40) B03(40) B04(80)", mq.size() == 3 && mq.peek().getBatchId().equals("B02") && mq.peek().getQuantity() == 40);
+ 
+-        // Trace 3.3 - vượt tồn / hết hạn hết / dữ liệu sai
+-        check("T3.3 xuất 500 > tồn 160 bị từ chối, hàng đợi giữ nguyên", !inv.issueStock("8930001", 500, d(30, 9), null, null) && mq.size() == 3);
+-        check("T3.3 tại 20/10 mọi lô hết hạn -> từ chối, lô vẫn nằm trong hàng", !inv.issueStock("8930001", 10, d(20, 10), null, null) && mq.size() == 3);
+-        check("T3.3 quantity = 0 bị từ chối", !inv.issueStock("8930001", 0, d(30, 9), null, null));
++        // Trace 3.3 - more than in stock / everything expired / invalid input
++        check("T3.3 issuing 500 > 160 in stock is rejected, queue unchanged", !inv.issueStock("8930001", 500, d(30, 9), null, null) && mq.size() == 3);
++        check("T3.3 on 20/10 every batch is expired -> rejected, batches stay in the queue", !inv.issueStock("8930001", 10, d(20, 10), null, null) && mq.size() == 3);
++        check("T3.3 quantity = 0 is rejected", !inv.issueStock("8930001", 0, d(30, 9), null, null));
+ 
+-        // Trace 3.4 - gặp lô hết hạn
++        // Trace 3.4 - encountering an expired batch
+         issued.clear(); expired.clear();
+-        check("T3.4 issueStock 60 tại 07/10", inv.issueStock("8930001", 60, d(7, 10), issued, expired));
++        check("T3.4 issueStock 60 on 07/10", inv.issueStock("8930001", 60, d(7, 10), issued, expired));
+         check("T3.4 expiredList = [B02:40], issuedList = [B03:40, B04:20]", expired.toString().equals("[B02:40]") && issued.toString().equals("[B03:40, B04:20]"));
+-        check("T3.4 còn B04(60)", mq.size() == 1 && mq.peek().getQuantity() == 60);
++        check("T3.4 B04(60) remains", mq.size() == 1 && mq.peek().getQuantity() == 60);
+ 
+         // Trace 4 - CheckExpiry
+         Inventory inv2 = milkInventory();
+         inv2.receiveBatch("8930001", new Batch("B04", d(14, 9), d(14, 10), 80));
+         List<String> ex = inv2.checkExpiry(d(7, 10), 5);
+-        check("T4 checkExpiry(07/10, K=5): 2 hết hạn + 1 sắp hết hạn", ex.size() == 3 && ex.get(0).endsWith("B01|50|EXPIRED")
++        check("T4 checkExpiry(07/10, K=5): 2 expired + 1 near expiry", ex.size() == 3 && ex.get(0).endsWith("B01|50|EXPIRED")
+                 && ex.get(1).endsWith("B02|60|EXPIRED") && ex.get(2).endsWith("B03|40|NEAR_EXPIRY"));
+-        check("T4 hàng đợi không đổi (4 lô)", inv2.getProductBST().search("8930001").batchQueue.size() == 4);
++        check("T4 queue unchanged (4 batches)", inv2.getProductBST().search("8930001").batchQueue.size() == 4);
+         List<String> edge = inv2.checkExpiry(d(10, 10), 0);
+-        check("T4 biên: HSD = currentDate, K = 0 -> B03 NEAR_EXPIRY (chưa hết hạn)", edge.size() == 3
++        check("T4 boundary: expiry = currentDate, K = 0 -> B03 NEAR_EXPIRY (not expired)", edge.size() == 3
+                 && edge.get(2).endsWith("B03|40|NEAR_EXPIRY") && edge.get(1).endsWith("B02|60|EXPIRED"));
+ 
+-        // Trace 5 - báo cáo
++        // Trace 5 - report
+         List<String> rp = inv2.generateInventoryReport();
+-        check("T5 report: tổng 230, 4 lô, HSD sớm nhất 2026-10-01", rp.size() == 1 && rp.get(0).equals("8930001|Sua tuoi|hop|20|230|4|2026-10-01"));
++        check("T5 report: total 230, 4 batches, earliest expiry 2026-10-01", rp.size() == 1 && rp.get(0).equals("8930001|Sua tuoi|hop|20|230|4|2026-10-01"));
+         inv2.getProductBST().insert(new Product("8930002", "Nuoc", "chai", 5));
+-        check("T5 sản phẩm chưa có lô: tổng 0, số lô 0", inv2.generateInventoryReport().get(1).equals("8930002|Nuoc|chai|5|0|0|-"));
++        check("T5 product without batches: total 0, batch count 0", inv2.generateInventoryReport().get(1).equals("8930002|Nuoc|chai|5|0|0|-"));
+ 
+ 
+-        // ---- Kiểm thử biên và các nhánh bổ sung ----
+-        // Delete: nút lá và nút có 1 con
++        // ---- Boundary tests and additional branches ----
++        // Delete: leaf node and node with one child
+         ProductBST d = new ProductBST();
+         for (String c : new String[]{"M", "F", "T", "A", "H", "P"}) d.insert(new Product(c, c, "u", 0));
+         //          M
+@@ -149,75 +149,75 @@ public class MainTest {
+         //       F     T
+         //      / \\   /
+         //     A   H P
+-        check("T1b delete nút lá (A): cây giữ tính chất BST", d.delete("A") && d.search("A") == null
++        check("T1b delete leaf (A): the BST property is kept", d.delete("A") && d.search("A") == null
+                 && d.getRoot().left.left == null && d.inOrderTraversal().size() == 5);
+-        check("T1b delete nút 1 con (T, con trái P): P thay vị trí T", d.delete("T")
++        check("T1b delete one-child node (T, left child P): P takes the place of T", d.delete("T")
+                 && d.getRoot().right.product.getBarcode().equals("P") && d.search("T") == null);
+-        check("T1b delete gốc (2 con): gốc đổi sang nút kế nhiệm", d.delete("M")
++        check("T1b delete the root (2 children): the root becomes the successor", d.delete("M")
+                 && d.getRoot().product.getBarcode().equals("P"));
+         StringBuilder order = new StringBuilder();
+         for (BSTNode n : d.inOrderTraversal()) order.append(n.product.getBarcode());
+-        check("T1b inOrder sau các lần xóa vẫn tăng dần (F,H,P)", order.toString().equals("FHP"));
++        check("T1b in-order after the deletions is still ascending (F,H,P)", order.toString().equals("FHP"));
+         ProductBST one = new ProductBST();
+         one.insert(new Product("X", "x", "u", 0));
+-        check("T1b xóa nút duy nhất -> cây rỗng", one.delete("X") && one.getRoot() == null && one.inOrderTraversal().isEmpty());
+-        check("T1b search/delete trên cây rỗng", one.search("X") == null && !one.delete("X"));
++        check("T1b delete the only node -> empty tree", one.delete("X") && one.getRoot() == null && one.inOrderTraversal().isEmpty());
++        check("T1b search/delete on an empty tree", one.search("X") == null && !one.delete("X"));
+ 
+-        // Delete di chuyển BatchQueue của nút kế nhiệm (Mục V.A 1.3 bước 4.5)
++        // Delete moves the successor's BatchQueue (pseudocode V.A 1.3 step 4.5)
+         ProductBST mv = new ProductBST();
+         mv.insert(new Product("B", "b", "u", 0)); mv.insert(new Product("A", "a", "u", 0)); mv.insert(new Product("C", "c", "u", 0));
+         mv.search("C").batchQueue.enqueue(new Batch("KEEP", d(1, 9), d(1, 12), 7));
+-        check("T1b xóa gốc 2 con: hàng đợi của nút kế nhiệm (C) không mất lô",
++        check("T1b delete a 2-child root: the successor's (C) queue loses no batch",
+                 mv.delete("B") && mv.getRoot().product.getBarcode().equals("C")
+                 && mv.getRoot().batchQueue.size() == 1 && mv.getRoot().batchQueue.peek().getBatchId().equals("KEEP"));
+ 
+-        // Đầu vào không hợp lệ
++        // Invalid input
+         Inventory inv3 = milkInventory();
+-        check("T3.1b receiveBatch quantity âm bị từ chối", !inv3.receiveBatch("8930001", new Batch("N1", d(14, 9), d(14, 10), -5)));
+-        check("T3.1b receiveBatch barcode rỗng / null / batch null bị từ chối",
++        check("T3.1b receiveBatch with negative quantity is rejected", !inv3.receiveBatch("8930001", new Batch("N1", d(14, 9), d(14, 10), -5)));
++        check("T3.1b receiveBatch with empty / null barcode or null batch is rejected",
+                 !inv3.receiveBatch("", new Batch("N2", d(14, 9), d(14, 10), 5))
+                 && !inv3.receiveBatch(null, new Batch("N3", d(14, 9), d(14, 10), 5))
+                 && !inv3.receiveBatch("8930001", null));
+-        check("T3.1b receiveBatch ngày null bị từ chối", !inv3.receiveBatch("8930001", new Batch("N4", null, d(14, 10), 5))
++        check("T3.1b receiveBatch with a null date is rejected", !inv3.receiveBatch("8930001", new Batch("N4", null, d(14, 10), 5))
+                 && !inv3.receiveBatch("8930001", new Batch("N5", d(14, 9), null, 5)));
+-        check("T3.1b hàng đợi vẫn 3 lô sau các lần từ chối", inv3.getProductBST().search("8930001").batchQueue.size() == 3);
+-        check("T3.3b issueStock quantity âm / barcode không tồn tại / barcode rỗng / ngày null bị từ chối",
++        check("T3.1b queue still holds 3 batches after the rejections", inv3.getProductBST().search("8930001").batchQueue.size() == 3);
++        check("T3.3b issueStock with negative quantity / unknown barcode / empty barcode / null date is rejected",
+                 !inv3.issueStock("8930001", -1, d(30, 9), null, null) && !inv3.issueStock("0000000", 1, d(30, 9), null, null)
+                 && !inv3.issueStock("", 1, d(30, 9), null, null) && !inv3.issueStock("8930001", 1, null, null, null));
+-        check("T3.3b issueStock từ chối không làm đổi hàng đợi", inv3.getProductBST().search("8930001").batchQueue.size() == 3
++        check("T3.3b a rejected issueStock leaves the queue unchanged", inv3.getProductBST().search("8930001").batchQueue.size() == 3
+                 && inv3.getProductBST().search("8930001").batchQueue.peek().getQuantity() == 50);
+ 
+-        // Biên: HSD = currentDate vẫn còn hạn khi xuất (quy ước expiryDate < currentDate mới hết hạn)
++        // Boundary: expiry = currentDate is still valid when issuing (expired only if expiryDate < currentDate)
+         Inventory inv4 = new Inventory();
+         inv4.getProductBST().insert(new Product("P1", "p", "u", 0));
+         inv4.receiveBatch("P1", new Batch("E1", d(1, 9), d(10, 10), 30));
+         List<String> iss4 = new ArrayList<>(), exp4 = new ArrayList<>();
+-        check("T3.4b biên: HSD = currentDate (10/10) vẫn xuất được, không bị loại",
++        check("T3.4b boundary: expiry = currentDate (10/10) can still be issued and is not discarded",
+                 inv4.issueStock("P1", 30, d(10, 10), iss4, exp4) && iss4.toString().equals("[E1:30]") && exp4.isEmpty());
+         inv4.receiveBatch("P1", new Batch("E2", d(1, 9), d(10, 10), 30));
+-        check("T3.4b biên: HSD = currentDate - 1 ngày thì hết hạn, không xuất được",
++        check("T3.4b boundary: expiry = currentDate - 1 day is expired and cannot be issued",
+                 !inv4.issueStock("P1", 1, d(11, 10), null, null));
+ 
+-        // Xuất đúng bằng tồn khả dụng -> hàng đợi rỗng, sản phẩm sau đó có thể bị xóa
++        // Issue exactly the available stock -> queue empty, the product can then be deleted
+         Inventory inv5 = milkInventory();
+-        check("T3.2b xuất đúng bằng tổng tồn (150) -> hàng đợi rỗng",
++        check("T3.2b issuing exactly the total stock (150) -> queue empty",
+                 inv5.issueStock("8930001", 150, d(30, 9), null, null) && inv5.getProductBST().search("8930001").batchQueue.isEmpty());
+-        check("T3.2b hàng đợi rỗng -> delete sản phẩm được phép", inv5.getProductBST().delete("8930001"));
++        check("T3.2b empty queue -> deleting the product is allowed", inv5.getProductBST().delete("8930001"));
+ 
+-        // checkExpiry / báo cáo với nhiều sản phẩm: thứ tự theo barcode tăng dần
++        // checkExpiry / report with several products: ascending barcode order
+         Inventory inv6 = new Inventory();
+         for (String c : new String[]{"300", "100", "200"}) inv6.getProductBST().insert(new Product(c, "p" + c, "u", 1));
+         inv6.receiveBatch("200", new Batch("Z", d(1, 9), d(8, 10), 10));
+         List<String> rp6 = inv6.generateInventoryReport();
+-        check("T5b báo cáo nhiều sản phẩm theo barcode tăng dần (100,200,300)",
++        check("T5b report of several products in ascending barcode order (100,200,300)",
+                 rp6.size() == 3 && rp6.get(0).startsWith("100|") && rp6.get(1).startsWith("200|") && rp6.get(2).startsWith("300|"));
+-        check("T4b checkExpiry không có lô nào cần chú ý -> danh sách rỗng", new Inventory().checkExpiry(d(7, 10), 5).isEmpty());
++        check("T4b checkExpiry with no batch needing attention -> empty list", new Inventory().checkExpiry(d(7, 10), 5).isEmpty());
+ 
+-        // ===== Tối ưu: inOrderTraversal lặp (T6x) =====
+-        check("T6a inOrderTraversal: cây rỗng -> danh sách rỗng", new ProductBST().inOrderTraversal().isEmpty());
++        // ===== Optimization: iterative inOrderTraversal (T6x) =====
++        check("T6a inOrderTraversal: empty tree -> empty list", new ProductBST().inOrderTraversal().isEmpty());
+         ProductBST single = new ProductBST();
+         single.insert(new Product("X", "x", "u", 0));
+-        check("T6b inOrderTraversal: cây một nút", single.inOrderTraversal().size() == 1
++        check("T6b inOrderTraversal: single-node tree", single.inOrderTraversal().size() == 1
+                 && single.inOrderTraversal().get(0) == single.getRoot());
+         ProductBST rnd = new ProductBST();
+         java.util.Random rg = new java.util.Random(7);
+@@ -227,36 +227,36 @@ public class MainTest {
+         List<BSTNode> itRnd = rnd.inOrderTraversal();
+         boolean same = itRnd.size() == refRnd.size();
+         for (int i = 0; same && i < refRnd.size(); i++) same = itRnd.get(i) == refRnd.get(i);
+-        check("T6c cây ngẫu nhiên (~2000 nút): kết quả trùng từng nút với bản đệ quy tham chiếu", same && ascending(itRnd));
++        check("T6c random tree (~2000 nodes): result matches the reference recursive version node by node", same && ascending(itRnd));
+         ProductBST small = new ProductBST();
+         for (String c : new String[]{"M", "F", "T", "A", "H", "P", "Z", "B"}) small.insert(new Product(c, "p", "u", 0));
+         StringBuilder sb = new StringBuilder();
+         for (BSTNode nd : small.inOrderTraversal()) sb.append(nd.product.getBarcode());
+-        check("T6d cây nhỏ có cả nhánh trái/phải: thứ tự ABFHMPTZ", sb.toString().equals("ABFHMPTZ"));
++        check("T6d small tree with left and right branches: order ABFHMPTZ", sb.toString().equals("ABFHMPTZ"));
+         List<BSTNode> before = small.inOrderTraversal();
+         List<BSTNode> after2 = small.inOrderTraversal();
+-        check("T6e gọi hai lần cho cùng kết quả, không làm đổi cây", before.equals(after2) && small.getRoot().product.getBarcode().equals("M"));
++        check("T6e two calls give the same result and do not change the tree", before.equals(after2) && small.getRoot().product.getBarcode().equals("M"));
+         int BIG = 200_000;
+         List<BSTNode> sr = skewed(BIG, true).inOrderTraversal();
+-        check("T6f cây lệch phải 200.000 nút: không tràn stack, đủ nút, tăng dần", sr.size() == BIG && ascending(sr));
++        check("T6f right-skewed tree of 200,000 nodes: no stack overflow, all nodes, ascending", sr.size() == BIG && ascending(sr));
+         List<BSTNode> sl = skewed(BIG, false).inOrderTraversal();
+-        check("T6g cây lệch trái 200.000 nút: không tràn stack, đủ nút, tăng dần", sl.size() == BIG && ascending(sl));
++        check("T6g left-skewed tree of 200,000 nodes: no stack overflow, all nodes, ascending", sl.size() == BIG && ascending(sl));
+         Inventory invS = new Inventory();
+         ProductBST sk = skewedInto(invS.getProductBST(), BIG, true);
+         sk.getRoot().batchQueue.enqueue(new Batch("S1", d(1, 9), d(5, 10), 7));
+-        check("T6h checkExpiry và generateInventoryReport chạy được trên cây lệch 200.000 nút",
++        check("T6h checkExpiry and generateInventoryReport run on a skewed tree of 200,000 nodes",
+                 invS.checkExpiry(d(7, 10), 5).size() == 1 && invS.generateInventoryReport().size() == BIG);
+ 
+-        // T7: checkExpiry với currentDate null phải trả về danh sách rỗng, không ném NullPointerException
++        // T7: checkExpiry with a null currentDate must return an empty list and not throw NullPointerException
+         Inventory invN = milkInventory();
+         boolean noThrow = true;
+         List<String> nullRes = null;
+         try { nullRes = invN.checkExpiry(null, 5); } catch (RuntimeException e) { noThrow = false; }
+-        check("T7 checkExpiry(null, 5): trả về danh sách rỗng, không ném NullPointerException, hàng đợi không đổi",
++        check("T7 checkExpiry(null, 5): returns an empty list, no NullPointerException, queue unchanged",
+                 noThrow && nullRes != null && nullRes.isEmpty()
+                 && invN.getProductBST().search("8930001").getBatchQueue().size() == 3);
+ 
+-        System.out.println("\nKết quả: " + pass + " PASS, " + fail + " FAIL");
++        System.out.println("\nResult: " + pass + " PASS, " + fail + " FAIL");
+         if (fail > 0) System.exit(1);
+     }
+ }

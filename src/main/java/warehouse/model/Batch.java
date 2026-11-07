@@ -1,6 +1,8 @@
+package warehouse.model;
+
 import java.time.LocalDate;
 
-/** Một lô hàng của một sản phẩm (Table 8). */
+/** A batch (lot) of one product (Table 8). */
 public class Batch {
     private final String batchId;
     private final LocalDate importDate;

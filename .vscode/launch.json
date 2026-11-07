@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run system (run.bat)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": ".\\run.bat",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug system (Java, breakpoints)",
+      "type": "java",
+      "request": "launch",
+      "mainClass": "warehouse.app.WarehouseApp",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "encoding": "UTF-8"
+    },
+    {
+      "name": "Run tests (MainTest)",
+      "type": "java",
+      "request": "launch",
+      "mainClass": "warehouse.MainTest",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "encoding": "UTF-8"
+    }
+  ]
+}

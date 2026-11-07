@@ -1,7 +1,11 @@
+package warehouse.structure;
+
+import warehouse.model.Batch;
+
 import java.util.ArrayList;
 import java.util.List;
 
-/** Hàng đợi FIFO các lô, cài đặt bằng danh sách liên kết đơn front/rear (không dùng java.util.Queue). */
+/** FIFO queue of batches, implemented as a singly linked list with front/rear pointers (java.util.Queue is not used). */
 public class BatchQueue {
     private static class Node {
         Batch batch;
@@ -13,7 +17,7 @@ public class BatchQueue {
     private Node rear;
     private int size;
 
-    /** O(1): thêm vào cuối hàng đợi. */
+    /** O(1): append to the rear of the queue. */
     public void enqueue(Batch batch) {
         Node node = new Node(batch);
         if (isEmpty()) {
@@ -26,7 +30,7 @@ public class BatchQueue {
         size++;
     }
 
-    /** O(1): lấy và xóa lô ở đầu; trả về null nếu rỗng. */
+    /** O(1): remove and return the front batch; returns null if the queue is empty. */
     public Batch dequeue() {
         if (isEmpty()) return null;
         Batch b = front.batch;
@@ -36,14 +40,14 @@ public class BatchQueue {
         return b;
     }
 
-    /** O(1): xem lô ở đầu; trả về null nếu rỗng. */
+    /** O(1): return the front batch without removing it; returns null if the queue is empty. */
     public Batch peek() { return isEmpty() ? null : front.batch; }
 
     public boolean isEmpty() { return size == 0; }
 
     public int size() { return size; }
 
-    /** O(k): danh sách các lô theo thứ tự hàng đợi, không làm thay đổi hàng đợi. */
+    /** O(k): batches in queue order; the queue is not modified. */
     public List<Batch> toList() {
         List<Batch> list = new ArrayList<>(size);
         for (Node p = front; p != null; p = p.next) list.add(p.batch);

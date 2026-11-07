@@ -1,4 +1,8 @@
-/** Nút của cây tìm kiếm: một Product và BatchQueue của sản phẩm đó (Table 8). */
+package warehouse.structure;
+
+import warehouse.model.Product;
+
+/** BST node: one Product and that product's BatchQueue (Table 8). */
 public class BSTNode {
     public Product product;
     public BatchQueue batchQueue;
